@@ -51,8 +51,7 @@ export function formatPriceShort(amount: number): string {
 /** "₹85 Lakh" / "₹1.25 Crore" — spelled out, for headings and prose. */
 export function formatPriceLong(amount: number): string {
   if (amount >= CRORE) {
-    const cr = amount / CRORE;
-    return `₹${trimZeros(round2(cr))} ${cr === 1 ? "Crore" : "Crore"}`;
+    return `₹${trimZeros(round2(amount / CRORE))} Crore`;
   }
   if (amount >= LAKH) {
     const lakh = amount / LAKH;

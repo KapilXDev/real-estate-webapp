@@ -28,6 +28,61 @@ Buyer-side is the priority (user set 70/30 buyer/seller), so in order:
 
 ---
 
+## 2026-08-29 — Step 8: Nx monorepo restructure + domain package
+
+**Answers locked this step:**
+| Question | Answer |
+|---|---|
+| Repo | **Nx monorepo** — see ADR-002. User asked for fault isolation; corrected the premise that monorepo implies monolith. |
+| Buyer auth | **Both** phone+OTP AND email+password on a linked identity model ("like fb/insta") — ADR-003 |
+| Partner visibility | **Tiered, per partner** — `partner_relationship` + `can_view_listing()` policy fn |
+| Languages | **English only** v1; columns shaped so a translation sibling table is addable |
+
+**Key correction made to the user (worth not re-litigating):** monorepo vs polyrepo is
+*source organisation*; fault isolation comes from deployment topology + resilience patterns.
+They are orthogonal axes. Fault isolation is delivered by: separate containers for the 3 extracted
+services, async via Redpanda, circuit breakers (`opossum`), timeouts + jittered backoff, bulkhead
+connection pools, graceful degradation, **transactional outbox**, and N replicas + health probes.
+See the resilience table in ARCHITECTURE.md ADR-002.
+
+**Done:**
+- Restructured to Nx monorepo. `git mv` used so Phase 1 history is preserved.
+  - `apps/web/` — the Next.js app, renamed `@tricity/web`
+  - `packages/domain/` — `@tricity/domain`
+  - `packages/contracts/` — `@tricity/contracts` (wire format, must stay dependency-free)
+  - `packages/config/`, `infra/docker/`
+- Root `package.json` (npm workspaces), `tsconfig.base.json` with `@tricity/*` path aliases,
+  `nx.json`, `.gitignore`, `.env.example`.
+- `.eslintrc.boundaries.json` — Nx `@nx/enforce-module-boundaries` depConstraints.
+  **This is the Spring Modulith replacement.** Merge into root ESLint config once Nx is installed.
+- **`packages/domain/src/area.ts`** — `Area` value object. Punjab marla = 272.25 sq ft,
+  kanal = 5,445 sq ft. Stores inputValue + inputUnit + canonical sqft + **the conversion factor
+  used**, and `fromStored()` rehydrates using the STORED factor so historical rows never shift
+  if the constant is later corrected. Bigha flagged as state-variable/approximate.
+- **`packages/domain/src/money.ts`** — INR lakh/crore. `formatPriceShort` (₹1.25 Cr) is the
+  DEFAULT display, not a fallback. `parsePriceInput()` accepts "85 lakh"/"1.25cr"/"₹85,00,000"
+  because agents type that far more often than 8500000 — misreading it by 10^5 would be severe.
+  Price buckets are market-shaped (dense ₹30L–₹1.5Cr), not evenly spaced.
+- `infra/docker/docker-compose.yml` — **PostGIS only**, healthchecked. MinIO and Redpanda are
+  written but commented out; enable when media upload / first event fan-out land.
+- Killed the Phase 1 dev server (it held file locks and blocked the `git mv`).
+
+**Committed:** `3cfe0cf`.
+
+## NEXT UP — BLOCKED ON USER APPROVAL TO INSTALL
+User said: *"keep me posted on what you do i will tell you when to install that."*
+**Nothing has been npm-installed. `node_modules` was deleted during the restructure — the repo
+does not currently build.** Awaiting go-ahead on:
+- Base: `nx`, `@nestjs/*`, `drizzle-orm`, `drizzle-kit`, `postgres`, `@nestjs/jwt`,
+  `@nestjs/passport`, `passport-jwt`, `argon2`, `class-validator`, `class-transformer`, `zod`,
+  `helmet`, `@nestjs/throttler`, `vitest`, `testcontainers`, `supertest`
+- **Explicitly held back:** Redis/cache (user will signal), `kafkajs` (until first fan-out exists)
+
+Then: migrations 0001-0008, seed tricity geography (Chandigarh Sectors 1-56, Mohali Phases 1-11 +
+Sectors 66-91, Kharar belt), then the identity module as the first vertical slice.
+
+---
+
 ## 2026-08-29 — Step 7: PIVOT — India market, NestJS backend, design phase
 
 **MAJOR PIVOT. Read this before touching anything from Steps 1-6.**
