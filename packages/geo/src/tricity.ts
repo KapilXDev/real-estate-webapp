@@ -1,5 +1,5 @@
 /**
- * Tricity geography seed — Chandigarh, Mohali, Kharar and neighbours.
+ * Tricity geography — Chandigarh, Mohali, Kharar and neighbours.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════
  *  ⚠️  READ THIS BEFORE TRUSTING ANY COORDINATE IN THIS FILE
@@ -43,11 +43,19 @@ export interface CitySeed {
   lng: number;
 }
 
+export type LocalityKind =
+  | "SECTOR"
+  | "PHASE"
+  | "ENCLAVE"
+  | "COLONY"
+  | "VILLAGE"
+  | "ROAD_BELT";
+
 export interface LocalitySeed {
   citySlug: string;
   name: string;
   slug: string;
-  kind: "SECTOR" | "PHASE" | "ENCLAVE" | "COLONY" | "VILLAGE" | "ROAD_BELT";
+  kind: LocalityKind;
   lat: number;
   lng: number;
   /** Circle radius used to synthesise a boundary polygon, in metres. */
@@ -256,4 +264,61 @@ export function circlePolygon(
   ring.push(ring[0]!);
 
   return { type: "Polygon", coordinates: [ring] };
+}
+
+/* ------------------------------------------------------------------------------------- */
+/* Lookup helpers                                                                         */
+/* ------------------------------------------------------------------------------------- */
+
+/**
+ * ⚠️ Locality slugs are unique PER CITY, not globally. Chandigarh and Mohali both have a
+ * "sector-70"-shaped namespace, and the database enforces `UNIQUE (city_id, slug)` accordingly.
+ * Anything keyed on a bare locality slug is a bug waiting to happen — use `localityKey`.
+ */
+export function localityKey(citySlug: string, localitySlug: string): string {
+  return `${citySlug}/${localitySlug}`;
+}
+
+const CITY_BY_SLUG = new Map(CITIES.map((c) => [c.slug, c]));
+const LOCALITY_BY_KEY = new Map(
+  LOCALITIES.map((l) => [localityKey(l.citySlug, l.slug), l]),
+);
+
+export function getCity(slug: string): CitySeed | undefined {
+  return CITY_BY_SLUG.get(slug);
+}
+
+export function getLocality(
+  citySlug: string,
+  localitySlug: string,
+): LocalitySeed | undefined {
+  return LOCALITY_BY_KEY.get(localityKey(citySlug, localitySlug));
+}
+
+export function localitiesInCity(citySlug: string): LocalitySeed[] {
+  return LOCALITIES.filter((l) => l.citySlug === citySlug);
+}
+
+/**
+ * Human label including the city — "Sector 70, Mohali".
+ *
+ * Always use this in search results and cards. "Sector 70" alone is genuinely ambiguous here:
+ * Chandigarh, Mohali and Panchkula all number their sectors, and a buyer shown the wrong city's
+ * Sector 70 has been actively misled about a property's location.
+ */
+export function localityLabel(locality: LocalitySeed): string {
+  const city = getCity(locality.citySlug);
+  return city ? `${locality.name}, ${city.name}` : locality.name;
+}
+
+/** Bounding box covering every seeded locality — the map's default framing. */
+export function tricityBounds(): { minLat: number; maxLat: number; minLng: number; maxLng: number } {
+  const lats = LOCALITIES.map((l) => l.lat);
+  const lngs = LOCALITIES.map((l) => l.lng);
+  return {
+    minLat: Math.min(...lats),
+    maxLat: Math.max(...lats),
+    minLng: Math.min(...lngs),
+    maxLng: Math.max(...lngs),
+  };
 }

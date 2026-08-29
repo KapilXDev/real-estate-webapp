@@ -8,5 +8,11 @@
  *    is the one place those rules must never be duplicated.
  */
 
-export * from "./area.js";
-export * from "./money.js";
+/*
+ * Extensionless imports, deliberately. These packages ship raw TypeScript and are compiled by
+ * their consumers (Next via transpilePackages, tsx for the API). An explicit ".js" extension is
+ * correct for native ESM but Turbopack will not map it back to the ".ts" source, so the build
+ * fails with "Can't resolve ./area.js". Extensionless resolves under both.
+ */
+export * from "./area";
+export * from "./money";

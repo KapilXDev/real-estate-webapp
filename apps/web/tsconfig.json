@@ -19,7 +19,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@tricity/domain": ["../../packages/domain/src/index.ts"],
+      "@tricity/geo": ["../../packages/geo/src/index.ts"]
     }
   },
   "include": [

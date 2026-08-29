@@ -1,39 +1,92 @@
 /**
- * Display formatting.
+ * Display formatting for the website.
  *
- * Centralised because listing figures appear in cards, map pins, detail pages, emails, and
- * schema.org markup — inconsistent formatting across those reads as sloppiness on a site whose
- * entire job is projecting competence with money.
+ * This module is deliberately THIN. Every rule that could be wrong in a way that costs money —
+ * lakh/crore thresholds, Indian digit grouping, marla/kanal conversion — lives in
+ * `@tricity/domain` so the backend, the website, and any future service all format identically.
+ * What stays here is presentation-only: relative timestamps, bath counts, days-on-market phrasing.
+ *
+ * If you are about to add a currency or area rule here, it belongs in @tricity/domain instead.
  */
 
-/** "$425,000" — no cents. Real estate prices are never shown to the cent. */
+import {
+  Area,
+  type AreaUnit,
+  formatPriceShort,
+  formatPricePerSqft as formatPricePerSqftInr,
+  formatRupees,
+  formatSqft as formatSqftIn,
+  formatMonthly as formatMonthlyInr,
+} from "@tricity/domain";
+
+/**
+ * "₹1.25 Cr" — the DEFAULT price display everywhere on this site.
+ *
+ * Not an abbreviation or a fallback: lakh/crore is simply how property prices are spoken and
+ * written in this market. Showing "₹1,25,00,000" as the headline figure reads as a foreign site
+ * that does not understand its own audience.
+ */
 export function formatPrice(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value);
+  return formatPriceShort(value);
 }
 
-/** "$425K" / "$1.2M" — for map pins and other tight spaces. */
+/** "₹1,25,00,000" — full precision. For contracts, breakdowns, and anywhere exactness matters. */
+export function formatPriceExact(value: number): string {
+  return formatRupees(value);
+}
+
+/** Map pins and other tight spaces use the same compact form — consistency over cleverness. */
 export function formatPriceCompact(value: number): string {
-  if (value >= 1_000_000) {
-    const millions = value / 1_000_000;
-    // 1.2M, but 12M rather than 12.0M.
-    return `$${millions >= 10 ? Math.round(millions) : millions.toFixed(1)}M`;
-  }
-  if (value >= 1_000) return `$${Math.round(value / 1_000)}K`;
-  return `$${value}`;
+  return formatPriceShort(value);
 }
 
-/** "1,850" — square footage with thousands separators. */
+/** "12,50,000" — Indian digit grouping (last three, then pairs). */
 export function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+  return new Intl.NumberFormat("en-IN").format(value);
 }
 
-/** "1,850 sq ft" */
+/** "1,700 sq ft" */
 export function formatSqft(value: number): string {
-  return `${formatNumber(value)} sq ft`;
+  return formatSqftIn(value);
+}
+
+/**
+ * "10 marla (2,723 sq ft)" — plot and covered area as they are actually quoted here.
+ *
+ * Replaces the old acre-based US lot-size logic. A tricity plot is described in marla, kanal or
+ * gaj; quoting "0.06 acres" would be technically correct and useless to every buyer who reads it.
+ */
+export function formatArea(value: number, unit: AreaUnit): string {
+  return Area.of(value, unit).formatWithSqft();
+}
+
+/**
+ * Render a stored area using the factor it was written with.
+ *
+ * Use this for anything coming out of the database — see the `fromStored` rationale in
+ * @tricity/domain. Falls back to plain square feet when the input unit was not captured, which is
+ * the case for legacy or partner-supplied rows.
+ */
+export function formatStoredArea(
+  sqft: number,
+  inputValue?: number | null,
+  inputUnit?: AreaUnit | null,
+  conversionFactor?: number | null,
+): string {
+  if (inputValue == null || inputUnit == null || conversionFactor == null) {
+    return formatSqftIn(sqft);
+  }
+  return Area.fromStored(inputValue, inputUnit, sqft, conversionFactor).formatWithSqft();
+}
+
+/** "₹6,200/sq ft" — the comparison metric experienced buyers here use most. */
+export function formatPricePerSqft(price: number, sqft: number): string {
+  return formatPricePerSqftInr(price, sqft);
+}
+
+/** "₹25,000/month" — rent and maintenance. */
+export function formatMonthly(value: number): string {
+  return formatMonthlyInr(Math.round(value));
 }
 
 /**
@@ -42,24 +95,6 @@ export function formatSqft(value: number): string {
  */
 export function formatBaths(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-/** "0.28 acres" from square feet. Lot sizes above ~10k sqft read better in acres. */
-export function formatLotSize(squareFeet: number): string {
-  const ACRE_SQFT = 43_560;
-  if (squareFeet >= 10_000) return `${(squareFeet / ACRE_SQFT).toFixed(2)} acres`;
-  return formatSqft(squareFeet);
-}
-
-/** "$248/sq ft" — the comparison metric experienced buyers actually use. */
-export function formatPricePerSqft(price: number, sqft: number): string {
-  if (!sqft) return "—";
-  return `$${Math.round(price / sqft)}/sq ft`;
-}
-
-/** "$1,240/mo" */
-export function formatMonthly(value: number): string {
-  return `${formatPrice(Math.round(value))}/mo`;
 }
 
 /**
@@ -74,7 +109,7 @@ export function formatDaysOnMarket(days: number): string {
   return months === 1 ? "1 month on market" : `${months} months on market`;
 }
 
-/** "Updated 3 hours ago" — the compliance-required feed freshness stamp. */
+/** "Updated 3 hours ago" — the freshness stamp shown alongside listing data. */
 export function formatRelativeTime(isoDate: string): string {
   const then = new Date(isoDate).getTime();
   if (Number.isNaN(then)) return "unknown";
@@ -92,7 +127,7 @@ export function formatRelativeTime(isoDate: string): string {
 
 /** "March 2024" */
 export function formatMonthYear(isoDate: string): string {
-  return new Date(isoDate).toLocaleDateString("en-US", {
+  return new Date(isoDate).toLocaleDateString("en-IN", {
     month: "long",
     year: "numeric",
   });

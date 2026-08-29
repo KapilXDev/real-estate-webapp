@@ -1,5 +1,5 @@
 /** Dev utility: print a sample of generated geography for eyeballing. Not part of the app. */
-import { CITIES, LOCALITIES } from "./geography";
+import { CITIES, LOCALITIES } from "@tricity/geo";
 
 const counts = new Map<string, number>();
 for (const l of LOCALITIES) counts.set(l.citySlug, (counts.get(l.citySlug) ?? 0) + 1);

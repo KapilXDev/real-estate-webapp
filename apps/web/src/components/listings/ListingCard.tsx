@@ -1,16 +1,55 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { Area } from "@tricity/domain";
+
 import { cn } from "@/lib/cn";
+import { formatBaths, formatDaysOnMarket, formatPrice } from "@/lib/format";
 import {
-  formatBaths,
-  formatDaysOnMarket,
-  formatPrice,
-  formatSqft,
-} from "@/lib/format";
-import type { Listing } from "@/lib/listings/types";
+  PROPERTY_TYPE_SHORT,
+  isLandType,
+  type Listing,
+  type StoredArea,
+} from "@/lib/listings/types";
 import { ListingAttribution } from "./ListingAttribution";
 import { StatusBadge } from "./StatusBadge";
+
+/** Render a stored area using the factor it was written with — "10 marla", "1,200 sq ft". */
+function areaText(area: StoredArea): string {
+  return Area.fromStored(
+    area.inputValue,
+    area.inputUnit,
+    area.sqft,
+    area.conversionFactor,
+  ).format();
+}
+
+/**
+ * The one-line spec under the price.
+ *
+ * Plots have no bedrooms, so they get their plot size and nothing else — printing "0 bd · 0 ba"
+ * on bare land is the kind of detail that tells a buyer here the site was not built for them.
+ * Everything else leads with BHK, which is the unit of account for Indian homes.
+ */
+function specLine(listing: Listing): string {
+  const parts: string[] = [];
+
+  if (isLandType(listing.propertyType)) {
+    if (listing.plotArea) parts.push(`${areaText(listing.plotArea)} plot`);
+    return parts.join(" · ") || PROPERTY_TYPE_SHORT[listing.propertyType];
+  }
+
+  if (listing.bedroomsTotal !== undefined) parts.push(`${listing.bedroomsTotal} BHK`);
+  if (listing.bathroomsTotal !== undefined) {
+    parts.push(`${formatBaths(listing.bathroomsTotal)} ba`);
+  }
+
+  // Carpet area leads where we have it — it is the RERA basis and the honest number.
+  const area = listing.carpetArea ?? listing.builtUpArea ?? listing.plotArea;
+  if (area) parts.push(areaText(area));
+
+  return parts.join(" · ");
+}
 
 /**
  * The listing card. Used in search results, neighborhood pages, and the agent's own listings —
@@ -34,8 +73,11 @@ export function ListingCard({
   className?: string;
 }) {
   const hero = listing.media[0];
-  const isSold = listing.status === "Closed";
+  const isSold = listing.status === "Sold";
   const displayPrice = isSold && listing.closePrice ? listing.closePrice : listing.listPrice;
+  // Premium stock is routinely advertised without a figure here; respect that rather than
+  // printing a number the seller chose not to publish.
+  const priceLabel = listing.priceOnRequest && !isSold ? "Price on request" : formatPrice(displayPrice);
 
   return (
     <article
@@ -80,8 +122,13 @@ export function ListingCard({
 
       <div className="flex flex-1 flex-col gap-2 p-4">
         <div className="flex items-baseline justify-between gap-2">
-          <p className="font-display text-2xl font-semibold text-sand-950">
-            {formatPrice(displayPrice)}
+          <p
+            className={cn(
+              "font-display font-semibold text-sand-950",
+              listing.priceOnRequest && !isSold ? "text-lg" : "text-2xl",
+            )}
+          >
+            {priceLabel}
           </p>
           {isSold && (
             <span className="text-xs font-medium uppercase tracking-wide text-sand-500">
@@ -90,17 +137,10 @@ export function ListingCard({
           )}
         </div>
 
-        {/* Separators are decorative, so they're hidden from screen readers. */}
-        <p className="text-sm font-medium text-sand-800">
-          {listing.bedroomsTotal} bd
-          <span aria-hidden="true" className="mx-1.5 text-sand-300">
-            ·
-          </span>
-          {formatBaths(listing.bathroomsTotal)} ba
-          <span aria-hidden="true" className="mx-1.5 text-sand-300">
-            ·
-          </span>
-          {formatSqft(listing.livingArea)}
+        <p className="text-sm font-medium text-sand-800">{specLine(listing)}</p>
+
+        <p className="text-xs font-medium uppercase tracking-wide text-brand-700">
+          {PROPERTY_TYPE_SHORT[listing.propertyType]}
         </p>
 
         <p className="text-sm text-sand-600">{listing.address.unparsed}</p>
@@ -120,7 +160,7 @@ export function ListingCard({
       <Link
         href={`/listings/${listing.listingKey}`}
         className="absolute inset-0 z-10"
-        aria-label={`View ${listing.address.unparsed} — ${formatPrice(displayPrice)}`}
+        aria-label={`View ${listing.address.unparsed} — ${priceLabel}`}
       >
         <span className="sr-only">View listing details</span>
       </Link>

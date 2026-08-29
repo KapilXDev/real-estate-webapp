@@ -1,3 +1,4 @@
+import { Area } from "@tricity/domain";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -5,40 +6,76 @@ import { notFound } from "next/navigation";
 import { TourRequestForm } from "@/components/leads/TourRequestForm";
 import { ListingAttribution } from "@/components/listings/ListingAttribution";
 import { ListingCard } from "@/components/listings/ListingCard";
-import { MortgageCalculator } from "@/components/listings/MortgageCalculator";
+import { EmiCalculator } from "@/components/listings/EmiCalculator";
 import { PhotoGallery } from "@/components/listings/PhotoGallery";
 import { StatusBadge } from "@/components/listings/StatusBadge";
-import { PROPERTY_TYPE_LABELS, getNeighborhood } from "@/config/neighborhoods";
+import { getLocality } from "@/config/localities";
 import { site } from "@/config/site";
 import {
   formatBaths,
   formatDaysOnMarket,
-  formatLotSize,
   formatPrice,
+  formatPriceExact,
   formatPricePerSqft,
   formatRelativeTime,
-  formatSqft,
 } from "@/lib/format";
 import { getListingProvider } from "@/lib/listings";
-import type { Listing } from "@/lib/listings/types";
+import {
+  FURNISHING_LABELS,
+  POSSESSION_LABELS,
+  PROPERTY_TYPE_LABELS,
+  PROPERTY_TYPE_SHORT,
+  comparableSqft,
+  isLandType,
+  type Listing,
+  type StoredArea,
+} from "@/lib/listings/types";
 
 /**
  * Property detail page — the deepest point of buyer intent on the site.
  *
- * Everything is oriented around converting an interested viewer into a showing request: the tour
- * CTA stays reachable through a long scroll (sticky sidebar), the mortgage estimate removes the
- * "can I actually afford this?" blocker, and the neighborhood link routes buyers deeper into the
- * hyperlocal content rather than back out to a portal.
+ * Everything is oriented around converting an interested viewer into a site visit: the visit CTA
+ * stays reachable through a long scroll (sticky sidebar), the EMI estimate removes the "can I
+ * actually afford this?" blocker, and the locality link routes buyers deeper into the hyperlocal
+ * content rather than back out to a portal.
  */
 
 type Params = { params: Promise<{ listingKey: string }> };
+
+/** Render a stored area with the factor it was written with — "10 marla (2,723 sq ft)". */
+function areaFull(area: StoredArea): string {
+  return Area.fromStored(
+    area.inputValue,
+    area.inputUnit,
+    area.sqft,
+    area.conversionFactor,
+  ).formatWithSqft();
+}
+
+/** Headline descriptor: "3 BHK Flat" or "10 Marla Plot". */
+function headline(listing: Listing): string {
+  const type = PROPERTY_TYPE_SHORT[listing.propertyType];
+  if (isLandType(listing.propertyType)) {
+    const size = listing.plotArea
+      ? Area.fromStored(
+          listing.plotArea.inputValue,
+          listing.plotArea.inputUnit,
+          listing.plotArea.sqft,
+          listing.plotArea.conversionFactor,
+        ).format()
+      : "";
+    return size ? `${size} ${type}` : type;
+  }
+  return listing.bedroomsTotal ? `${listing.bedroomsTotal} BHK ${type}` : type;
+}
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { listingKey } = await params;
   const listing = await getListingProvider().getByKey(listingKey);
   if (!listing) return { title: "Listing not found" };
 
-  const title = `${listing.bedroomsTotal} Bed, ${formatBaths(listing.bathroomsTotal)} Bath in ${listing.address.city} — ${formatPrice(listing.listPrice)}`;
+  const price = listing.priceOnRequest ? "Price on request" : formatPrice(listing.listPrice);
+  const title = `${headline(listing)} in ${listing.address.line1}, ${listing.address.city} — ${price}`;
   const description = listing.publicRemarks.slice(0, 155);
 
   return {
@@ -59,13 +96,23 @@ export default async function ListingPage({ params }: Params) {
 
   if (!listing) notFound();
 
-  const neighborhood = getNeighborhood(listing.neighborhoodSlug);
-  const nearby = (await provider.getByNeighborhood(listing.neighborhoodSlug, 5)).filter(
-    (l) => l.listingKey !== listing.listingKey,
-  );
+  const locality = getLocality(listing.citySlug, listing.localitySlug);
+  const nearby = (
+    await provider.getByLocality(
+      { citySlug: listing.citySlug, localitySlug: listing.localitySlug },
+      5,
+    )
+  ).filter((l) => l.listingKey !== listing.listingKey);
 
-  const isSold = listing.status === "Closed";
+  const isSold = listing.status === "Sold";
   const displayPrice = isSold && listing.closePrice ? listing.closePrice : listing.listPrice;
+  const showPrice = !listing.priceOnRequest || isSold;
+  const sqft = comparableSqft(listing);
+
+  // Only localities with hand-written content have a landing page to link to.
+  const localityHref = locality?.content
+    ? `/localities/${listing.citySlug}/${listing.localitySlug}`
+    : null;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -78,16 +125,19 @@ export default async function ListingPage({ params }: Params) {
           <li>
             <Link href="/search" className="hover:text-brand-700">Search</Link>
           </li>
-          {neighborhood && (
+          {locality && (
             <>
               <li aria-hidden="true">/</li>
               <li>
-                <Link
-                  href={`/neighborhoods/${neighborhood.slug}`}
-                  className="hover:text-brand-700"
-                >
-                  {neighborhood.name}
-                </Link>
+                {localityHref ? (
+                  <Link href={localityHref} className="hover:text-brand-700">
+                    {locality.name}, {locality.cityName}
+                  </Link>
+                ) : (
+                  <span>
+                    {locality.name}, {locality.cityName}
+                  </span>
+                )}
               </li>
             </>
           )}
@@ -106,30 +156,45 @@ export default async function ListingPage({ params }: Params) {
               {formatDaysOnMarket(listing.daysOnMarket)}
             </span>
             <span aria-hidden="true" className="text-sand-300">·</span>
-            <span className="text-sm text-sand-600">MLS# {listing.mlsNumber}</span>
+            {/* Our own reference, not an industry identifier — there is no MLS number here. */}
+            <span className="text-sm text-sand-600">Ref. {listing.referenceCode}</span>
           </div>
 
           <h1 className="mt-4 font-display text-4xl font-semibold text-sand-950">
-            {formatPrice(displayPrice)}
+            {showPrice ? formatPrice(displayPrice) : "Price on request"}
           </h1>
-          <p className="mt-2 text-lg text-sand-700">{listing.address.unparsed}</p>
+          {showPrice && (
+            <p className="mt-1 text-sm text-sand-600">{formatPriceExact(displayPrice)}</p>
+          )}
+          <p className="mt-2 text-lg text-sand-700">
+            {headline(listing)} · {listing.address.unparsed}
+          </p>
 
           <div className="mt-6 flex flex-wrap gap-x-8 gap-y-3 border-y border-sand-200 py-4">
-            <Stat label="Bedrooms" value={String(listing.bedroomsTotal)} />
-            <Stat label="Bathrooms" value={formatBaths(listing.bathroomsTotal)} />
-            <Stat label="Interior" value={formatSqft(listing.livingArea)} />
-            <Stat
-              label="Price / sq ft"
-              value={formatPricePerSqft(displayPrice, listing.livingArea)}
-            />
-            {listing.lotSizeSquareFeet && (
-              <Stat label="Lot" value={formatLotSize(listing.lotSizeSquareFeet)} />
+            {listing.bedroomsTotal !== undefined && (
+              <Stat label="Bedrooms" value={`${listing.bedroomsTotal} BHK`} />
             )}
+            {listing.bathroomsTotal !== undefined && (
+              <Stat label="Bathrooms" value={formatBaths(listing.bathroomsTotal)} />
+            )}
+            {listing.carpetArea && (
+              <Stat label="Carpet area" value={areaFull(listing.carpetArea)} />
+            )}
+            {listing.builtUpArea && (
+              <Stat label="Built-up area" value={areaFull(listing.builtUpArea)} />
+            )}
+            {listing.plotArea && (
+              <Stat label="Plot area" value={areaFull(listing.plotArea)} />
+            )}
+            {showPrice && sqft > 0 && (
+              <Stat label="Rate" value={formatPricePerSqft(displayPrice, sqft)} />
+            )}
+            <Stat label="Possession" value={POSSESSION_LABELS[listing.possession]} />
           </div>
 
           <section className="mt-8">
             <h2 className="font-display text-2xl font-semibold text-sand-950">
-              About this home
+              About this property
             </h2>
             <p className="mt-3 leading-relaxed text-sand-700">{listing.publicRemarks}</p>
           </section>
@@ -150,26 +215,31 @@ export default async function ListingPage({ params }: Params) {
 
           <PropertyFacts listing={listing} />
 
-          {neighborhood && (
+          {locality?.content && (
             <section className="mt-8 rounded-card border border-sand-200 bg-sand-100 p-6">
               <h2 className="font-display text-2xl font-semibold text-sand-950">
-                About {neighborhood.name}
+                About {locality.name}, {locality.cityName}
               </h2>
-              <p className="mt-3 leading-relaxed text-sand-700">{neighborhood.lifestyle}</p>
-              <Link
-                href={`/neighborhoods/${neighborhood.slug}`}
-                className="mt-4 inline-block text-sm font-semibold text-brand-700 hover:underline"
-              >
-                Read the full {neighborhood.name} guide →
-              </Link>
+              <p className="mt-3 leading-relaxed text-sand-700">
+                {locality.content.lifestyle}
+              </p>
+              {localityHref && (
+                <Link
+                  href={localityHref}
+                  className="mt-4 inline-block text-sm font-semibold text-brand-700 hover:underline"
+                >
+                  Read the full {locality.name} guide →
+                </Link>
+              )}
             </section>
           )}
 
           <div className="mt-8">
-            <MortgageCalculator
-              homePrice={displayPrice}
-              annualTax={listing.taxAnnualAmount}
-              monthlyHoa={listing.associationFee}
+            <EmiCalculator
+              propertyPrice={displayPrice}
+              monthlyMaintenance={listing.maintenanceCharges}
+              annualPropertyTax={listing.propertyTaxAnnual}
+              state={listing.address.state}
             />
           </div>
         </div>
@@ -188,12 +258,21 @@ export default async function ListingPage({ params }: Params) {
               >
                 {site.agent.phone}
               </a>
+              {/* WhatsApp is the dominant channel here — give it equal billing with the phone. */}
+              <a
+                href={`https://wa.me/${site.agent.whatsapp}?text=${encodeURIComponent(
+                  `Hi, I'm interested in ${listing.address.unparsed} (Ref. ${listing.referenceCode}).`,
+                )}`}
+                className="mt-1 block text-sm font-medium text-brand-700 hover:underline"
+              >
+                Message on WhatsApp
+              </a>
               <ListingAttribution
                 listing={listing}
                 className="mt-4 border-t border-sand-100 pt-3"
               />
               <p className="mt-2 text-[11px] text-sand-500">
-                Listing data updated {formatRelativeTime(listing.modificationTimestamp)}.
+                Listing updated {formatRelativeTime(listing.modificationTimestamp)}.
               </p>
             </div>
           </div>
@@ -203,7 +282,7 @@ export default async function ListingPage({ params }: Params) {
       {nearby.length > 0 && (
         <section className="mt-16 border-t border-sand-200 pt-10">
           <h2 className="font-display text-2xl font-semibold text-sand-950">
-            More homes in {neighborhood?.name ?? "this area"}
+            More in {locality ? `${locality.name}, ${locality.cityName}` : "this area"}
           </h2>
           <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
             {nearby.slice(0, 4).map((l) => (
@@ -232,20 +311,46 @@ function Stat({ label, value }: { label: string; value: string }) {
 function PropertyFacts({ listing }: { listing: Listing }) {
   const facts: [string, string][] = [
     ["Property type", PROPERTY_TYPE_LABELS[listing.propertyType]],
-    ["Year built", String(listing.yearBuilt)],
-    ["Interior", formatSqft(listing.livingArea)],
+    ["Possession", POSSESSION_LABELS[listing.possession]],
   ];
 
-  if (listing.lotSizeSquareFeet) {
-    facts.push(["Lot size", formatLotSize(listing.lotSizeSquareFeet)]);
+  if (listing.possessionDate) {
+    facts.push([
+      "Expected possession",
+      new Date(listing.possessionDate).toLocaleDateString("en-IN", {
+        month: "long",
+        year: "numeric",
+      }),
+    ]);
   }
-  if (listing.associationFee) {
-    facts.push(["HOA dues", `${formatPrice(listing.associationFee)}/mo`]);
+  if (listing.yearBuilt) facts.push(["Year built", String(listing.yearBuilt)]);
+  if (listing.carpetArea) facts.push(["Carpet area", areaFull(listing.carpetArea)]);
+  if (listing.builtUpArea) facts.push(["Built-up area", areaFull(listing.builtUpArea)]);
+  if (listing.plotArea) facts.push(["Plot area", areaFull(listing.plotArea)]);
+  if (listing.floor !== undefined && listing.totalFloors !== undefined) {
+    facts.push([
+      "Floor",
+      `${listing.floor === 0 ? "Ground" : listing.floor} of ${listing.totalFloors}`,
+    ]);
   }
-  if (listing.taxAnnualAmount) {
-    facts.push(["Annual tax", formatPrice(listing.taxAnnualAmount)]);
+  if (listing.furnishing) facts.push(["Furnishing", FURNISHING_LABELS[listing.furnishing]]);
+  if (listing.facing) {
+    facts.push([
+      "Facing",
+      listing.facing.replace("-", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    ]);
   }
-  facts.push(["MLS number", listing.mlsNumber], ["Postal code", listing.address.postalCode]);
+  if (listing.balconies !== undefined) facts.push(["Balconies", String(listing.balconies)]);
+  if (listing.maintenanceCharges) {
+    facts.push(["Society maintenance", `${formatPriceExact(listing.maintenanceCharges)}/month`]);
+  }
+  if (listing.propertyTaxAnnual) {
+    facts.push(["Property tax", `${formatPriceExact(listing.propertyTaxAnnual)}/year`]);
+  }
+  if (listing.reraProjectRegistration) {
+    facts.push(["Project RERA", listing.reraProjectRegistration]);
+  }
+  facts.push(["Reference", listing.referenceCode], ["PIN code", listing.address.pincode]);
 
   return (
     <section className="mt-8">
@@ -268,31 +373,36 @@ function PropertyFacts({ listing }: { listing: Listing }) {
 /**
  * schema.org structured data.
  *
- * Real estate is a vertical where Google reliably surfaces rich results, and listing pages are
- * the highest-volume page type on this site — worth getting right rather than treating as
- * optional SEO garnish.
+ * Google reliably surfaces rich results for property, and listing pages are the highest-volume
+ * page type on this site — worth getting right rather than treating as optional SEO garnish.
+ *
+ * Type is chosen from the property type rather than hardcoded: the old build emitted
+ * SingleFamilyResidence for everything, which is simply wrong for a plot or an SCO and risks the
+ * markup being ignored or flagged.
  */
 function PropertyJsonLd({ listing }: { listing: Listing }) {
-  const schema = {
+  const schemaType = isLandType(listing.propertyType)
+    ? "Place"
+    : listing.propertyType === "flat"
+      ? "Apartment"
+      : "SingleFamilyResidence";
+
+  const sqft = comparableSqft(listing);
+
+  const schema: Record<string, unknown> = {
     "@context": "https://schema.org",
-    "@type": "SingleFamilyResidence",
-    name: listing.address.unparsed,
+    "@type": schemaType,
+    name: `${headline(listing)} in ${listing.address.line1}, ${listing.address.city}`,
     description: listing.publicRemarks,
-    numberOfRooms: listing.bedroomsTotal,
-    numberOfBathroomsTotal: listing.bathroomsTotal,
-    yearBuilt: listing.yearBuilt,
-    floorSize: {
-      "@type": "QuantitativeValue",
-      value: listing.livingArea,
-      unitCode: "FTK",
-    },
     address: {
       "@type": "PostalAddress",
-      streetAddress: `${listing.address.streetNumber} ${listing.address.streetName}`,
+      streetAddress: [listing.address.houseNumber, listing.address.line1]
+        .filter(Boolean)
+        .join(", "),
       addressLocality: listing.address.city,
-      addressRegion: listing.address.stateOrProvince,
-      postalCode: listing.address.postalCode,
-      addressCountry: "US",
+      addressRegion: listing.address.state,
+      postalCode: listing.address.pincode,
+      addressCountry: "IN",
     },
     geo: {
       "@type": "GeoCoordinates",
@@ -300,16 +410,31 @@ function PropertyJsonLd({ listing }: { listing: Listing }) {
       longitude: listing.coordinates.lng,
     },
     photo: listing.media.map((m) => m.url),
-    offers: {
+  };
+
+  if (listing.bedroomsTotal !== undefined) schema.numberOfRooms = listing.bedroomsTotal;
+  if (listing.bathroomsTotal !== undefined) {
+    schema.numberOfBathroomsTotal = listing.bathroomsTotal;
+  }
+  if (listing.yearBuilt) schema.yearBuilt = listing.yearBuilt;
+  if (sqft > 0) {
+    // FTK is the UN/CEFACT code for square foot. Areas are stored canonically in sq ft even
+    // where they were entered in marla, so this stays consistent.
+    schema.floorSize = { "@type": "QuantitativeValue", value: sqft, unitCode: "FTK" };
+  }
+
+  // Only advertise a price when the seller has published one.
+  if (!listing.priceOnRequest) {
+    schema.offers = {
       "@type": "Offer",
       price: listing.listPrice,
-      priceCurrency: "USD",
+      priceCurrency: "INR",
       availability:
         listing.status === "Active"
           ? "https://schema.org/InStock"
           : "https://schema.org/SoldOut",
-    },
-  };
+    };
+  }
 
   return (
     <script

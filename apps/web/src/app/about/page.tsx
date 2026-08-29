@@ -1,24 +1,25 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { neighborhoods } from "@/config/neighborhoods";
-import { site } from "@/config/site";
+import { localitiesWithContent } from "@/config/localities";
+import { reraForState, site } from "@/config/site";
 
 /**
  * About page.
  *
  * PLACEHOLDER CONTENT — the testimonials and stats below are structural examples showing where
- * real content goes. Replace all of it before launch; fabricated testimonials on a real estate
- * site are both a trust problem and, in most states, a licensing one.
+ * real content goes. Replace all of it before launch; fabricated testimonials on a property site
+ * are a trust problem, and under RERA's advertising provisions misleading claims carry real
+ * penalties.
  *
- * The `Person` + `RealEstateAgent` schema at the bottom is genuinely useful: it feeds Google's
- * entity understanding of the agent, which supports the local pack ranking that drives most
- * agent-site traffic.
+ * The `RealEstateAgent` schema at the bottom is genuinely useful: it feeds Google's entity
+ * understanding of the agent, which supports the local pack ranking that drives most of this
+ * kind of site's traffic.
  */
 
 export const metadata: Metadata = {
   title: `About ${site.agent.name}`,
-  description: `${site.agent.name}, ${site.agent.title} serving ${site.market.city}, ${site.market.stateFull}. ${site.agent.tagline}`,
+  description: `${site.agent.name}, ${site.agent.title} serving the ${site.market.name}. ${site.agent.tagline}`,
 };
 
 /** PLACEHOLDER — replace with real, attributable client testimonials. */
@@ -28,14 +29,14 @@ const TESTIMONIALS = [
       "Placeholder testimonial. Replace with a real client quote — the more specific it is about " +
       "what actually happened, the more persuasive it reads.",
     author: "Client name",
-    context: "Bought in [Neighborhood], 2025",
+    context: "Bought in [Sector], 2025",
   },
   {
     quote:
       "Placeholder testimonial. Two or three strong, specific quotes outperform a long wall of " +
       "generic praise.",
     author: "Client name",
-    context: "Sold in [Neighborhood], 2025",
+    context: "Sold in [Sector], 2025",
   },
 ];
 
@@ -92,8 +93,15 @@ export default function AboutPage() {
             <div className="mt-6 rounded-card border border-sand-200 bg-white p-5 text-sm">
               <p className="font-semibold text-sand-900">{site.agent.name}</p>
               <p className="text-sand-600">{site.agent.title}</p>
-              <p className="mt-3 text-sand-700">{site.brokerage.name}</p>
-              <p className="mt-1 text-xs text-sand-500">{site.agent.licenseNumber}</p>
+              <p className="mt-3 text-sand-700">{site.firm.name}</p>
+              {/* RERA registrations must appear in advertising — see SiteFooter. */}
+              <div className="mt-1 space-y-0.5 text-xs text-sand-500">
+                {Object.values(site.rera.byState).map((j) => (
+                  <p key={j.registration}>
+                    {j.shortName} {j.registration}
+                  </p>
+                ))}
+              </div>
               <a
                 href={`tel:${site.agent.phone.replace(/[^\d+]/g, "")}`}
                 className="mt-4 block font-medium text-brand-700 hover:underline"
@@ -154,13 +162,13 @@ export default function AboutPage() {
             Areas I work
           </h2>
           <div className="mt-5 flex flex-wrap gap-3">
-            {neighborhoods.map((n) => (
+            {localitiesWithContent().map((l) => (
               <Link
-                key={n.slug}
-                href={`/neighborhoods/${n.slug}`}
+                key={`${l.citySlug}/${l.slug}`}
+                href={`/localities/${l.citySlug}/${l.slug}`}
                 className="rounded-full border border-sand-300 bg-white px-4 py-2 text-sm font-medium text-sand-800 hover:border-brand-400 hover:text-brand-700"
               >
-                {n.name}
+                {l.name}, {l.cityName}
               </Link>
             ))}
           </div>
@@ -173,6 +181,8 @@ export default function AboutPage() {
 }
 
 function AgentJsonLd() {
+  const homeJurisdiction = reraForState(site.rera.defaultState);
+
   const schema = {
     "@context": "https://schema.org",
     "@type": "RealEstateAgent",
@@ -183,18 +193,21 @@ function AgentJsonLd() {
     description: site.agent.tagline,
     worksFor: {
       "@type": "Organization",
-      name: site.brokerage.name,
-      address: site.brokerage.address,
+      name: site.firm.name,
+      address: site.firm.address,
     },
-    areaServed: neighborhoods.map((n) => ({
+    // The RERA number is the closest thing to a professional licence identifier here, and
+    // Google does use identifier fields for entity disambiguation.
+    identifier: homeJurisdiction.registration,
+    areaServed: localitiesWithContent().map((l) => ({
       "@type": "Place",
-      name: `${n.name}, ${site.market.city}, ${site.market.state}`,
+      name: `${l.name}, ${l.cityName}, ${l.state}`,
     })),
     address: {
       "@type": "PostalAddress",
-      addressLocality: site.market.city,
-      addressRegion: site.market.state,
-      addressCountry: "US",
+      addressLocality: "Chandigarh",
+      addressRegion: "Chandigarh",
+      addressCountry: "IN",
     },
   };
 

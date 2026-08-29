@@ -1,6 +1,6 @@
 import postgres from "postgres";
 
-import { CITIES, LOCALITIES, circlePolygon } from "./geography";
+import { CITIES, LOCALITIES, circlePolygon } from "@tricity/geo";
 
 /**
  * Seed runner.
@@ -99,7 +99,7 @@ async function seed(connectionString: string): Promise<void> {
     }
     console.log(
       "\n⚠️  All boundaries are generated circles. Replace with OSM data before launch —" +
-        "\n    see the Overpass query in src/database/seed/geography.ts",
+        "\n    see the Overpass query in packages/geo/src/tricity.ts",
     );
   } finally {
     await sql.end();

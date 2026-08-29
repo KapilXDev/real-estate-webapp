@@ -1,5 +1,5 @@
 {
-  "name": "@tricity/domain",
+  "name": "@tricity/geo",
   "version": "0.1.0",
   "private": true,
   "main": "./src/index.ts",

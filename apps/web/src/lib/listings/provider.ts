@@ -1,34 +1,44 @@
 /**
  * The seam between the UI and wherever listing data actually comes from.
  *
- * WHY THIS EXISTS: live MLS listings require a signed IDX agreement with the MLS board, obtained
- * through the broker. That is a licensing gate, not a technical one, and it is not yet cleared.
- * Rather than block the entire buyer-side build on it, every component talks to this interface.
+ * WHY THIS EXISTS — and why the reason CHANGED:
  *
- *   Today:  MockProvider  — realistic generated sample data
- *   Later:  ResoProvider  — RESO Web API (REST/JSON, replaced RETS ~2020)
+ * This interface originally existed to absorb an IDX/MLS feed integration. That plan is dead:
+ * there is no MLS in India. The seam is still worth keeping, but for a different and more
+ * permanent reason — inventory here arrives from several unrelated sources that will never share
+ * a schema:
+ *
+ *   Today:  MockProvider   — deterministic generated sample data
+ *   Next:   ApiProvider    — our own NestJS catalog service (agent's own listings)
+ *   Later:  PartnerProvider / builder project feeds, merged behind the same contract
+ *
+ * Because inventory sourcing is the hardest unsolved problem in this project rather than a
+ * licensing formality, the abstraction earns its keep permanently instead of being scaffolding.
  *
  * Swapping providers must require ZERO changes to any UI component. If you find yourself wanting
  * to import a concrete provider inside a component, that's a design smell — go through
  * `getListingProvider()` instead.
  */
 
-import type { Listing, ListingQuery, ListingResult } from "./types";
+import type { Listing, ListingQuery, ListingResult, LocalityRef } from "./types";
 
 export interface ListingProvider {
   /** Human-readable provider name, surfaced in dev tooling and the admin health check. */
   readonly name: string;
 
   /**
-   * True when this provider serves real MLS data. Gates display of the board's attribution and
-   * disclaimer blocks — we must not show a real MLS copyright line over fabricated sample data.
+   * True when this provider serves real inventory.
+   *
+   * While false, the site must not present itself as a working property portal: robots.ts blocks
+   * indexing and ListingAttribution suppresses provenance claims. Publishing fabricated listings
+   * as though they were real is a RERA advertising problem, not just a bug.
    */
-  readonly isLiveMlsData: boolean;
+  readonly isLiveData: boolean;
 
   /** Run a filtered, sorted, paginated search. */
   search(query: ListingQuery): Promise<ListingResult>;
 
-  /** Fetch one listing by its RESO ListingKey. Returns null when not found or no longer public. */
+  /** Fetch one listing by key. Returns null when not found or no longer public. */
   getByKey(listingKey: string): Promise<Listing | null>;
 
   /**
@@ -37,23 +47,32 @@ export interface ListingProvider {
    */
   getOwnListings(opts?: { includeSold?: boolean }): Promise<Listing[]>;
 
-  /** Listings within a neighborhood, for embedding live inventory on its landing page. */
-  getByNeighborhood(slug: string, limit?: number): Promise<Listing[]>;
+  /**
+   * Listings within a locality, for embedding live inventory on its landing page.
+   * Takes a city-qualified ref — locality slugs are not globally unique.
+   */
+  getByLocality(ref: LocalityRef, limit?: number): Promise<Listing[]>;
+
+  /** Listings anywhere in a city, for the city hub pages. */
+  getByCity(citySlug: string, limit?: number): Promise<Listing[]>;
 
   /**
-   * Aggregate stats for a neighborhood, powering market-report content and the automated
-   * monthly emails. Returns null when there aren't enough sales to be meaningful.
+   * Aggregate stats for a locality, powering market-report content and the automated monthly
+   * emails. Returns null when there isn't enough inventory to be meaningful.
    */
-  getMarketStats(neighborhoodSlug: string): Promise<MarketStats | null>;
+  getMarketStats(ref: LocalityRef): Promise<MarketStats | null>;
 }
 
 export interface MarketStats {
-  neighborhoodSlug: string;
+  citySlug: string;
+  localitySlug: string;
   activeCount: number;
+  /** Rupees. */
   medianListPrice: number;
+  /** Rupees per square foot — the comparison metric buyers here use most. */
   medianPricePerSqft: number;
   medianDaysOnMarket: number;
-  /** Closed sales in the trailing 90 days. */
+  /** Sales closed in the trailing 90 days. */
   closedLast90Days: number;
   /** Median close price over that window. Null when sample size is too small to publish. */
   medianClosePrice: number | null;

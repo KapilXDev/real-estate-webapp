@@ -24,8 +24,10 @@ import {
  */
 
 export const metadata: Metadata = {
-  title: `Search Homes in ${site.market.city}`,
-  description: `Browse every active listing in ${site.market.city}, ${site.market.stateFull}. Filter by price, size, neighborhood, or draw your own search area on the map.`,
+  title: `Search Property in the ${site.market.name}`,
+  description:
+    `Browse property for sale across Chandigarh, Mohali, Kharar and Zirakpur. Filter by price, ` +
+    `size, sector, possession status — or draw your own search area on the map.`,
 };
 
 type Props = { searchParams: Promise<RawSearchParams> };
@@ -60,7 +62,7 @@ export default async function SearchPage({ searchParams }: Props) {
             <h1 className="font-display text-2xl font-semibold text-sand-950">
               {query.q
                 ? `Results for “${query.q}”`
-                : `${describeQuery(query)} in ${site.market.city}`}
+                : `${describeQuery(query)} in the ${site.market.name}`}
             </h1>
             {query.polygons?.length ? (
               <p className="mt-1 text-sm text-sand-600">
@@ -119,7 +121,7 @@ function ResultsGrid({
     return (
       <div className="rounded-card border border-dashed border-sand-300 bg-white px-6 py-16 text-center">
         <h2 className="font-display text-xl font-semibold text-sand-900">
-          No homes match those filters
+          No property matches those filters
         </h2>
         <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-sand-600">
           Try widening the price range or clearing a filter. If you tell me what you&rsquo;re

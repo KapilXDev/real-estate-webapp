@@ -2,13 +2,16 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "../../",
     "paths": {
       "@tricity/domain": [
         "../../packages/domain/src/index.ts"
       ],
       "@tricity/contracts": [
         "../../packages/contracts/src/index.ts"
+      ],
+      "@tricity/geo": [
+        "../../packages/geo/src/index.ts"
       ]
     },
     "emitDecoratorMetadata": true,

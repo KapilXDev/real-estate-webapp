@@ -14,15 +14,15 @@ import { getListingProvider } from "@/lib/listings";
  */
 
 export const metadata: Metadata = {
-  title: `Our Listings in ${site.market.city}`,
-  description: `Current listings and recent sales from ${site.agent.name}, ${site.agent.title} in ${site.market.city}, ${site.market.stateFull}.`,
+  title: `Our Listings in the ${site.market.name}`,
+  description: `Current listings and recent sales from ${site.agent.name}, ${site.agent.title}, across Chandigarh, Mohali and Kharar.`,
 };
 
 export default async function ListingsPage() {
   const all = await getListingProvider().getOwnListings({ includeSold: true });
 
-  const active = all.filter((l) => l.status !== "Closed");
-  const sold = all.filter((l) => l.status === "Closed");
+  const active = all.filter((l) => l.status !== "Sold");
+  const sold = all.filter((l) => l.status === "Sold");
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
@@ -31,8 +31,8 @@ export default async function ListingsPage() {
           Our listings
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-sand-700">
-          Homes currently represented by {site.agent.name}, plus recent sales in{" "}
-          {site.market.city}.
+          Property currently represented by {site.agent.name}, plus recent sales across the
+          tricity.
         </p>
       </header>
 
@@ -55,7 +55,7 @@ export default async function ListingsPage() {
               href="/search"
               className="mt-4 inline-block rounded-md bg-brand-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-800"
             >
-              Browse all {site.market.city} homes
+              Browse all tricity property
             </Link>
           </div>
         )}
@@ -65,7 +65,7 @@ export default async function ListingsPage() {
         <section className="mt-16 border-t border-sand-200 pt-10">
           <h2 className="font-display text-2xl font-semibold text-sand-950">Recently sold</h2>
           <p className="mt-2 max-w-2xl text-sand-700">
-            Closed transactions — the clearest evidence of what I can do for you.
+            Completed transactions — the clearest evidence of what I can do for you.
           </p>
           <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {sold.map((listing) => (
@@ -86,7 +86,7 @@ export default async function ListingsPage() {
           href="/home-value"
           className="mt-6 inline-block rounded-md bg-white px-8 py-3.5 text-base font-semibold text-brand-800 hover:bg-brand-50"
         >
-          Get my home&rsquo;s value
+          Get my property&rsquo;s value
         </Link>
       </section>
     </div>

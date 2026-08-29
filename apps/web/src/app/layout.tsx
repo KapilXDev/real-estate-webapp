@@ -31,18 +31,19 @@ export const metadata: Metadata = {
    * name repeated on every listing.
    */
   title: {
-    default: `${site.agent.name} | ${site.market.city} Real Estate`,
+    default: `${site.agent.name} | ${site.market.name} Property`,
     template: `%s | ${site.agent.name}`,
   },
   description: site.agent.tagline,
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   openGraph: {
     type: "website",
-    locale: "en_US",
-    siteName: `${site.agent.name} | ${site.market.city} Real Estate`,
+    locale: "en_IN",
+    siteName: `${site.agent.name} | ${site.market.name} Property`,
   },
   robots: {
-    // Sample-data builds must not be indexed — that would be an IDX and accuracy problem.
+    // Sample-data builds must not be indexed. Presenting fabricated listings as real inventory
+    // is a RERA advertising problem, not just an accuracy one.
     index: Boolean(process.env.NEXT_PUBLIC_SITE_URL),
     follow: Boolean(process.env.NEXT_PUBLIC_SITE_URL),
   },
@@ -50,7 +51,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${inter.variable} ${fraunces.variable} h-full`}>
+    <html lang="en-IN" className={`${inter.variable} ${fraunces.variable} h-full`}>
       <body className="flex min-h-full flex-col">
         {/* Skip link — search filter pages have long nav; keyboard users need the bypass. */}
         <a

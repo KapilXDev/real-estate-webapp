@@ -2,41 +2,68 @@
  * Bidirectional mapping between URL search params and `ListingQuery`.
  *
  * WHY THE URL IS THE SOURCE OF TRUTH FOR SEARCH STATE:
- *  - Buyers share searches ("look at this one"). State in React only would break that.
+ *  - Buyers share searches over WhatsApp constantly in this market. State in React only would
+ *    break that, and WhatsApp is the dominant channel here.
  *  - Back/forward navigation works for free.
- *  - Filtered result pages are crawlable, which is how a neighborhood + price-band page can
- *    ever rank.
+ *  - Filtered result pages are crawlable, which is how a locality + price-band page can ever rank.
  *  - The page still works with JavaScript disabled, because the hero form is a plain GET.
  *
  * Polygons are the one thing that cannot go in a readable URL — an encoded ring of coordinates
  * is long and opaque, so it is compacted (see encode/decodePolygons) rather than expanded.
  */
 
-import type { PropertyType } from "@/config/neighborhoods";
-import type { ListingQuery, ListingSort, ListingStatus, Polygon } from "./types";
+import { formatPriceShort } from "@tricity/domain";
+
+import {
+  type Furnishing,
+  type ListingQuery,
+  type ListingSort,
+  type ListingStatus,
+  type LocalityRef,
+  type Polygon,
+  type PossessionStatus,
+  type PropertyType,
+  PROPERTY_TYPE_SHORT,
+} from "./types";
 
 const VALID_SORTS: ListingSort[] = [
   "newest",
   "price-asc",
   "price-desc",
   "beds-desc",
-  "sqft-desc",
+  "area-desc",
 ];
 
 const VALID_PROPERTY_TYPES: PropertyType[] = [
-  "single-family",
-  "condo",
-  "townhouse",
-  "multi-family",
-  "land",
+  "plot",
+  "kothi",
+  "builder-floor",
+  "flat",
+  "villa",
+  "sco",
+  "scf",
+  "booth",
+  "farmhouse",
 ];
 
 const VALID_STATUSES: ListingStatus[] = [
   "Active",
-  "Active Under Contract",
-  "Pending",
-  "Closed",
+  "Under Offer",
+  "Sold",
+  "Rented",
   "Coming Soon",
+];
+
+const VALID_POSSESSION: PossessionStatus[] = [
+  "ready-to-move",
+  "under-construction",
+  "new-launch",
+];
+
+const VALID_FURNISHING: Furnishing[] = [
+  "unfurnished",
+  "semi-furnished",
+  "fully-furnished",
 ];
 
 function num(value: string | undefined): number | undefined {
@@ -49,6 +76,32 @@ function list(value: string | undefined): string[] | undefined {
   if (!value) return undefined;
   const items = value.split(",").map((s) => s.trim()).filter(Boolean);
   return items.length > 0 ? items : undefined;
+}
+
+/**
+ * Localities travel as "city/locality" pairs, e.g. `area=mohali/sector-70,chandigarh/sector-35`.
+ *
+ * ⚠️ The city half is NOT optional. Locality slugs are unique only within a city, so a bare
+ * "sector-70" is ambiguous the moment Panchkula sectors are added — and silently resolving it to
+ * the wrong city would show buyers property in a different town than the one they filtered on.
+ */
+function decodeLocalities(value: string | undefined): LocalityRef[] | undefined {
+  const items = list(value);
+  if (!items) return undefined;
+
+  const refs = items
+    .map((item) => {
+      const [citySlug, localitySlug] = item.split("/");
+      if (!citySlug || !localitySlug) return null;
+      return { citySlug, localitySlug };
+    })
+    .filter((r): r is LocalityRef => r !== null);
+
+  return refs.length > 0 ? refs : undefined;
+}
+
+function encodeLocalities(refs: LocalityRef[]): string {
+  return refs.map((r) => `${r.citySlug}/${r.localitySlug}`).join(",");
 }
 
 /**
@@ -74,7 +127,7 @@ function decodePolygons(value: string | undefined): Polygon[] | undefined {
       const points: Polygon = [];
       // Coordinates come in lat/lng pairs; a trailing odd value is malformed input, so drop it.
       for (let i = 0; i + 1 < nums.length; i += 2) {
-        points.push({ lat: nums[i], lng: nums[i + 1] });
+        points.push({ lat: nums[i]!, lng: nums[i + 1]! });
       }
       return points;
     })
@@ -92,16 +145,24 @@ const first = (value: string | string[] | undefined): string | undefined =>
 
 export function parseSearchParams(params: RawSearchParams): ListingQuery {
   const sort = first(params.sort);
+
   const propertyTypes = list(first(params.type))?.filter((t): t is PropertyType =>
     VALID_PROPERTY_TYPES.includes(t as PropertyType),
   );
   const status = list(first(params.status))?.filter((s): s is ListingStatus =>
     VALID_STATUSES.includes(s as ListingStatus),
   );
+  const possession = list(first(params.possession))?.filter((p): p is PossessionStatus =>
+    VALID_POSSESSION.includes(p as PossessionStatus),
+  );
+  const furnishing = list(first(params.furnishing))?.filter((f): f is Furnishing =>
+    VALID_FURNISHING.includes(f as Furnishing),
+  );
 
   return {
     q: first(params.q),
-    neighborhoodSlugs: list(first(params.area)),
+    citySlugs: list(first(params.city)),
+    localities: decodeLocalities(first(params.area)),
     status,
     minPrice: num(first(params.minPrice)),
     maxPrice: num(first(params.maxPrice)),
@@ -111,7 +172,9 @@ export function parseSearchParams(params: RawSearchParams): ListingQuery {
     maxSqft: num(first(params.maxSqft)),
     minYearBuilt: num(first(params.minYear)),
     propertyTypes,
-    maxHoaFee: num(first(params.maxHoa)),
+    possession,
+    furnishing,
+    maxMaintenance: num(first(params.maxMaint)),
     features: list(first(params.features)),
     polygons: decodePolygons(first(params.poly)),
     sort: VALID_SORTS.includes(sort as ListingSort) ? (sort as ListingSort) : "newest",
@@ -141,11 +204,14 @@ export function toSearchParams(query: ListingQuery): URLSearchParams {
   set("minSqft", query.minSqft);
   set("maxSqft", query.maxSqft);
   set("minYear", query.minYearBuilt);
-  set("maxHoa", query.maxHoaFee);
+  set("maxMaint", query.maxMaintenance);
 
-  if (query.neighborhoodSlugs?.length) params.set("area", query.neighborhoodSlugs.join(","));
+  if (query.citySlugs?.length) params.set("city", query.citySlugs.join(","));
+  if (query.localities?.length) params.set("area", encodeLocalities(query.localities));
   if (query.propertyTypes?.length) params.set("type", query.propertyTypes.join(","));
   if (query.status?.length) params.set("status", query.status.join(","));
+  if (query.possession?.length) params.set("possession", query.possession.join(","));
+  if (query.furnishing?.length) params.set("furnishing", query.furnishing.join(","));
   if (query.features?.length) params.set("features", query.features.join(","));
   if (query.polygons?.length) params.set("poly", encodePolygons(query.polygons));
 
@@ -166,25 +232,37 @@ export function activeFilterCount(query: ListingQuery): number {
     query.minSqft,
     query.maxSqft,
     query.minYearBuilt,
-    query.maxHoaFee,
-    query.neighborhoodSlugs?.length,
+    query.maxMaintenance,
+    query.citySlugs?.length,
+    query.localities?.length,
     query.propertyTypes?.length,
+    query.possession?.length,
+    query.furnishing?.length,
     query.features?.length,
     query.polygons?.length,
   ].filter(Boolean).length;
 }
 
-/** Human-readable summary for the results heading and page title. */
+/**
+ * Human-readable summary for the results heading and page title.
+ *
+ * Prices are described in lakh/crore because that is how the number will be spoken back. Saying
+ * "under ₹8500k" would be gibberish to the audience.
+ */
 export function describeQuery(query: ListingQuery): string {
   const parts: string[] = [];
 
-  if (query.minBeds) parts.push(`${query.minBeds}+ bed`);
+  if (query.minBeds) parts.push(`${query.minBeds}+ BHK`);
+
   if (query.propertyTypes?.length === 1) {
-    parts.push(query.propertyTypes[0].replace("-", " "));
+    parts.push(PROPERTY_TYPE_SHORT[query.propertyTypes[0]!].toLowerCase());
   } else {
-    parts.push("homes");
+    parts.push("property");
   }
-  if (query.maxPrice) parts.push(`under $${Math.round(query.maxPrice / 1000)}k`);
+
+  if (query.maxPrice) {
+    parts.push(`under ${formatPriceShort(query.maxPrice)}`);
+  }
   if (query.polygons?.length) parts.push("in your drawn area");
 
   return parts.join(" ");

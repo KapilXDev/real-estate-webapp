@@ -3,24 +3,27 @@ import { cn } from "@/lib/cn";
 import type { Listing } from "@/lib/listings/types";
 
 /**
- * MLS broker attribution — LEGALLY REQUIRED on every rendered view of an IDX listing.
+ * Listing attribution + RERA registration — REQUIRED on every rendered view of a listing.
  *
  * READ THIS BEFORE CHANGING ANYTHING HERE:
  *
- * MLS boards require "Courtesy of {listing brokerage}" to appear on *every* display of a listing —
- * search result cards and map thumbnails included, not just the detail page. This is the single
- * most commonly violated IDX rule, because developers naturally attach attribution to the detail
- * page and forget the card grid.
+ * This component replaced the MLS/IDX broker-attribution block from the original US build. The
+ * legal driver changed but the structural requirement did not:
  *
- * The defence here is structural: `ListingCard` renders this component unconditionally, so a card
- * cannot exist without attribution. Do not add a prop to hide it. If a layout is too tight to fit
- * attribution, the layout is wrong.
+ *   Under the Real Estate (Regulation and Development) Act, a registered agent's RERA
+ *   registration number must appear in ALL advertising. A property listing on a website is
+ *   advertising. The penalty for an agent runs to ₹10 lakh.
  *
- * NAR's 2026 handbook overhaul removed the model $15,000 penalty cap, so boards now have wide
- * latitude on enforcement.
+ * The defence is structural, exactly as before: `ListingCard` renders this component
+ * unconditionally, so a card cannot exist without attribution. Do not add a prop to hide it. If a
+ * layout is too tight to fit attribution, the layout is wrong.
  *
- * While `isLiveMlsData` is false (sample data), we correctly do NOT print a real board's
- * disclaimer — claiming MLS provenance over fabricated listings would be its own problem.
+ * ⚠️ TWO JURISDICTIONS. Chandigarh is a Union Territory with its own authority; Mohali, Kharar,
+ * Zirakpur and New Chandigarh fall under Punjab RERA. The registration shown is the one that
+ * applies to the property's own state, carried on the listing — not a single site-wide number.
+ *
+ * While the provider is not serving live data, we label listings as sample data rather than
+ * printing a registration over fabricated inventory, which would be its own advertising problem.
  */
 export function ListingAttribution({
   listing,
@@ -29,14 +32,28 @@ export function ListingAttribution({
   listing: Listing;
   className?: string;
 }) {
-  const isLive = getListingProvider().isLiveMlsData;
+  const isLive = getListingProvider().isLiveData;
 
-  // Own listings still get attributed — the brokerage holds the listing, not the agent.
-  const courtesy = `Courtesy of ${listing.listOfficeName}`;
+  // Own listings still get attributed — the firm holds the listing, not the individual agent.
+  const courtesy = `Listed by ${listing.listedByFirm}`;
+
+  if (!isLive) {
+    return (
+      <p className={cn("text-[11px] leading-snug text-sand-500", className)}>
+        {courtesy} (sample data)
+      </p>
+    );
+  }
 
   return (
     <p className={cn("text-[11px] leading-snug text-sand-500", className)}>
-      {isLive ? courtesy : `${courtesy} (sample data)`}
+      {courtesy}
+      <span className="block">RERA Reg. {listing.reraAgentRegistration}</span>
+      {listing.reraProjectRegistration && (
+        <span className="block">
+          Project RERA {listing.reraProjectRegistration}
+        </span>
+      )}
     </p>
   );
 }

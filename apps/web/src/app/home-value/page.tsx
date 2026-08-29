@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { HomeValuationForm } from "@/components/leads/HomeValuationForm";
-import { neighborhoods } from "@/config/neighborhoods";
+import { localitiesWithContent } from "@/config/localities";
 import { site } from "@/config/site";
 
 /**
@@ -16,8 +16,10 @@ import { site } from "@/config/site";
  */
 
 export const metadata: Metadata = {
-  title: `What's My Home Worth? | ${site.market.city} Home Valuation`,
-  description: `Find out what your ${site.market.city} home is actually worth — a real valuation from a local agent, not an automated estimate. Free and no obligation.`,
+  title: `What's My Property Worth? | ${site.market.name} Valuation`,
+  description:
+    `Find out what your property in Chandigarh, Mohali or Kharar is actually worth — a real ` +
+    `valuation from a local agent, not an automated estimate. Free and no obligation.`,
 };
 
 const REASONS = [
@@ -107,11 +109,14 @@ export default function HomeValuePage() {
       <section className="border-t border-sand-200 bg-sand-100">
         <div className="mx-auto max-w-4xl px-4 py-14 text-center sm:px-6 lg:px-8">
           <h2 className="font-display text-2xl font-semibold text-sand-950">
-            Serving {site.market.city} and surrounding neighborhoods
+            Serving Chandigarh, Mohali, Kharar and the surrounding tricity
           </h2>
           <p className="mt-3 leading-relaxed text-sand-700">
             Including{" "}
-            {neighborhoods.map((n) => n.name).join(", ")} — and everywhere in between.
+            {localitiesWithContent()
+              .map((l) => `${l.name}, ${l.cityName}`)
+              .join(" · ")}{" "}
+            — and everywhere in between.
           </p>
         </div>
       </section>

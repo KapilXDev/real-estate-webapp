@@ -3,9 +3,20 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
-import { PROPERTY_TYPE_LABELS, neighborhoods, type PropertyType } from "@/config/neighborhoods";
+import { PRICE_BUCKETS_SALE } from "@tricity/domain";
+import { CITIES } from "@tricity/geo";
+
+import { localitiesWithContent } from "@/config/localities";
 import { cn } from "@/lib/cn";
 import { formatPriceCompact } from "@/lib/format";
+import {
+  FURNISHING_LABELS,
+  POSSESSION_LABELS,
+  PROPERTY_TYPE_SHORT,
+  type Furnishing,
+  type PossessionStatus,
+  type PropertyType,
+} from "@/lib/listings/types";
 
 /**
  * Filter panel.
@@ -13,26 +24,26 @@ import { formatPriceCompact } from "@/lib/format";
  * Every change writes to the URL rather than local state — see query-params.ts for why the URL
  * is the source of truth (shareable, crawlable, back-button-correct, works without JS).
  *
- * Filter selection is opinionated. These are the ones buyers actually use; a wall of thirty
+ * Filter selection is opinionated. These are the ones buyers here actually use; a wall of thirty
  * checkboxes measurably reduces the number of people who filter at all. Notably included:
- *  - max HOA, which buyers care about and most agent sites omit
- *  - year built, the proxy for "will this need a new roof and wiring"
+ *  - possession status, which in this market is used ahead of almost everything but price
+ *  - furnishing, a standard expectation on flats here
+ *  - max society maintenance, which buyers care about and most portals bury
  */
 
-const PRICE_STEPS = [
-  0, 100_000, 150_000, 200_000, 250_000, 300_000, 350_000, 400_000, 450_000,
-  500_000, 600_000, 700_000, 800_000, 1_000_000, 1_500_000, 2_000_000,
-];
+/** Price steps come from @tricity/domain so the site and the API bucket prices identically. */
+const PRICE_STEPS = PRICE_BUCKETS_SALE;
 
+/** Kept in step with the generator's FEATURE_POOL in mock-provider.ts. */
 const FEATURES = [
-  "Garage",
-  "Fenced Yard",
-  "Updated Kitchen",
-  "Finished Basement",
-  "Pool",
-  "Waterfront",
-  "New Construction",
-  "Home Office",
+  "Corner Plot",
+  "Park Facing",
+  "Power Backup",
+  "Covered Parking",
+  "Lift",
+  "Gated Society",
+  "Vaastu Compliant",
+  "Modular Kitchen",
 ];
 
 export function SearchFilters({ resultCount }: { resultCount: number }) {
@@ -72,7 +83,7 @@ export function SearchFilters({ resultCount }: { resultCount: number }) {
 
   const activeCount = [
     "minPrice", "maxPrice", "beds", "baths", "minSqft", "minYear",
-    "maxHoa", "area", "type", "features", "poly",
+    "maxMaint", "city", "area", "type", "possession", "furnishing", "features", "poly",
   ].filter((key) => searchParams.get(key)).length;
 
   return (
@@ -95,7 +106,7 @@ export function SearchFilters({ resultCount }: { resultCount: number }) {
 
           <p className="text-sm text-sand-600">
             <span className="font-semibold text-sand-900">{resultCount}</span>{" "}
-            {resultCount === 1 ? "home" : "homes"}
+            {resultCount === 1 ? "property" : "properties"}
           </p>
 
           <div className="flex items-center gap-3">
@@ -119,7 +130,7 @@ export function SearchFilters({ resultCount }: { resultCount: number }) {
               <option value="price-asc">Price: low to high</option>
               <option value="price-desc">Price: high to low</option>
               <option value="beds-desc">Most bedrooms</option>
-              <option value="sqft-desc">Largest</option>
+              <option value="area-desc">Largest</option>
             </select>
           </div>
         </div>
@@ -169,17 +180,24 @@ export function SearchFilters({ resultCount }: { resultCount: number }) {
                 ...[1, 2, 3, 4].map((n) => ({ value: String(n), label: `${n}+` })),
               ]}
             />
+            {/*
+              * Area is filtered on canonical square feet even though buyers think in marla, so
+              * the labels carry both. Showing only sq ft here would make the filter unusable for
+              * the plot buyers who are a large share of this market.
+              */}
             <Select
               id="minSqft"
-              label="Min square feet"
+              label="Min area"
               value={get("minSqft")}
               onChange={(v) => update("minSqft", v)}
               options={[
                 { value: "", label: "Any" },
-                ...[800, 1000, 1250, 1500, 2000, 2500, 3000].map((n) => ({
-                  value: String(n),
-                  label: `${n.toLocaleString()}+`,
-                })),
+                { value: "1089", label: "4 marla+" },
+                { value: "1361", label: "5 marla+" },
+                { value: "2178", label: "8 marla+" },
+                { value: "2723", label: "10 marla+" },
+                { value: "3812", label: "14 marla+" },
+                { value: "5445", label: "1 kanal+" },
               ]}
             />
             <Select
@@ -189,24 +207,23 @@ export function SearchFilters({ resultCount }: { resultCount: number }) {
               onChange={(v) => update("minYear", v)}
               options={[
                 { value: "", label: "Any year" },
-                ...[1950, 1970, 1990, 2000, 2010, 2020].map((y) => ({
+                ...[1990, 2000, 2010, 2015, 2020].map((y) => ({
                   value: String(y),
                   label: String(y),
                 })),
               ]}
             />
-            {/* Buyers filter on HOA more than most agent sites expect. */}
             <Select
-              id="maxHoa"
-              label="Max HOA dues"
-              value={get("maxHoa")}
-              onChange={(v) => update("maxHoa", v)}
+              id="maxMaint"
+              label="Max maintenance"
+              value={get("maxMaint")}
+              onChange={(v) => update("maxMaint", v)}
               options={[
                 { value: "", label: "Any" },
-                { value: "0", label: "No HOA" },
-                ...[150, 250, 400, 600].map((n) => ({
+                { value: "0", label: "None" },
+                ...[2000, 4000, 6000, 10000].map((n) => ({
                   value: String(n),
-                  label: `Up to $${n}/mo`,
+                  label: `Up to ₹${n.toLocaleString("en-IN")}/mo`,
                 })),
               ]}
             />
@@ -214,19 +231,57 @@ export function SearchFilters({ resultCount }: { resultCount: number }) {
 
           <ChipGroup
             label="Property type"
-            options={(Object.keys(PROPERTY_TYPE_LABELS) as PropertyType[]).map((t) => ({
+            options={(Object.keys(PROPERTY_TYPE_SHORT) as PropertyType[]).map((t) => ({
               value: t,
-              label: PROPERTY_TYPE_LABELS[t],
+              label: PROPERTY_TYPE_SHORT[t],
             }))}
             isActive={(v) => has("type", v)}
             onToggle={(v) => toggleInList("type", v)}
           />
 
+          {/*
+           * Possession sits high in the panel on purpose: ready-to-move vs under-construction is
+           * the first cut most buyers here make, ahead of size and often ahead of exact price.
+           */}
           <ChipGroup
-            label="Neighborhood"
-            options={neighborhoods.map((n) => ({ value: n.slug, label: n.name }))}
+            label="Possession"
+            options={(Object.keys(POSSESSION_LABELS) as PossessionStatus[]).map((p) => ({
+              value: p,
+              label: POSSESSION_LABELS[p],
+            }))}
+            isActive={(v) => has("possession", v)}
+            onToggle={(v) => toggleInList("possession", v)}
+          />
+
+          <ChipGroup
+            label="City"
+            options={CITIES.map((c) => ({ value: c.slug, label: c.name }))}
+            isActive={(v) => has("city", v)}
+            onToggle={(v) => toggleInList("city", v)}
+          />
+
+          {/*
+           * Locality values are city-qualified ("mohali/sector-70"). A bare slug would be
+           * ambiguous across the tricity's three sector-numbering municipalities.
+           */}
+          <ChipGroup
+            label="Area"
+            options={localitiesWithContent().map((l) => ({
+              value: `${l.citySlug}/${l.slug}`,
+              label: `${l.name}, ${l.cityName}`,
+            }))}
             isActive={(v) => has("area", v)}
             onToggle={(v) => toggleInList("area", v)}
+          />
+
+          <ChipGroup
+            label="Furnishing"
+            options={(Object.keys(FURNISHING_LABELS) as Furnishing[]).map((f) => ({
+              value: f,
+              label: FURNISHING_LABELS[f],
+            }))}
+            isActive={(v) => has("furnishing", v)}
+            onToggle={(v) => toggleInList("furnishing", v)}
           />
 
           <ChipGroup

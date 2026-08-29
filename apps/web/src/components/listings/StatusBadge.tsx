@@ -3,30 +3,33 @@ import type { ListingStatus } from "@/lib/listings/types";
 
 /**
  * Listing status pill. Status drives buyer behaviour more than almost any other field —
- * "Pending" saves people a wasted showing request — so it is always visible, never truncated,
+ * "Under Offer" saves people a wasted site visit — so it is always visible, never truncated,
  * and uses consistent colors sitewide.
+ *
+ * The US escrow states ("Pending", "Active Under Contract") were removed in the India pivot:
+ * a transaction here runs agreement-to-sell → registry, and "Under Offer" (token/bayana taken)
+ * is the honest equivalent.
  */
 
 const STATUS_STYLES: Record<ListingStatus, { label: string; className: string }> = {
   Active: {
-    label: "Active",
+    label: "Available",
     className: "bg-status-active text-white",
   },
   "Coming Soon": {
     label: "Coming Soon",
     className: "bg-status-coming text-white",
   },
-  "Active Under Contract": {
-    // Shortened: the full RESO value overflows a card badge, and buyers say "under contract".
-    label: "Under Contract",
+  "Under Offer": {
+    label: "Under Offer",
     className: "bg-status-contract text-white",
   },
-  Pending: {
-    label: "Pending",
-    className: "bg-status-pending text-white",
-  },
-  Closed: {
+  Sold: {
     label: "Sold",
+    className: "bg-status-closed text-white",
+  },
+  Rented: {
+    label: "Rented",
     className: "bg-status-closed text-white",
   },
 };

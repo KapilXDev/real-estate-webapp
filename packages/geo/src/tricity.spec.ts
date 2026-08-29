@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { CITIES, LOCALITIES, circlePolygon } from "./geography";
+import {
+  CITIES,
+  LOCALITIES,
+  circlePolygon,
+  getCity,
+  getLocality,
+  localitiesInCity,
+  localityKey,
+  localityLabel,
+  tricityBounds,
+} from "./tricity";
 
 /**
- * Invariants for the geography seed.
+ * Invariants for the geography data.
  *
  * These matter more than typical fixture tests because the locality centroids are GENERATED
  * from a grid model rather than surveyed. The grid maths is easy to get subtly wrong — an
@@ -202,5 +212,41 @@ describe("circlePolygon", () => {
     expect(lng).toBeLessThan(77);
     expect(lat).toBeGreaterThan(30);
     expect(lat).toBeLessThan(31);
+  });
+});
+
+describe("lookup helpers", () => {
+  it("keys localities by city, because bare slugs collide across cities", () => {
+    // Chandigarh and Mohali both have sectors. Mohali's run 66-91 and Chandigarh's 1-56 so they
+    // do not overlap *today*, but Panchkula sectors would collide the moment they are added —
+    // and the database already enforces UNIQUE (city_id, slug), not UNIQUE (slug).
+    expect(localityKey("mohali", "sector-70")).toBe("mohali/sector-70");
+    expect(getLocality("mohali", "sector-70")).toBeDefined();
+    expect(getLocality("chandigarh", "sector-70")).toBeUndefined();
+  });
+
+  it("resolves cities by slug and rejects unknown ones", () => {
+    expect(getCity("mohali")?.name).toBe("Mohali");
+    expect(getCity("gurgaon")).toBeUndefined();
+  });
+
+  it("partitions localities by city without loss", () => {
+    const total = CITIES.reduce((sum, c) => sum + localitiesInCity(c.slug).length, 0);
+    expect(total).toBe(LOCALITIES.length);
+  });
+
+  it("qualifies locality labels with the city name", () => {
+    const sector70 = getLocality("mohali", "sector-70")!;
+    // "Sector 70" alone is ambiguous across tricity municipalities; showing it unqualified in
+    // search results actively misleads a buyer about where a property is.
+    expect(localityLabel(sector70)).toBe("Sector 70, Mohali");
+  });
+
+  it("derives map framing that contains every locality", () => {
+    const b = tricityBounds();
+    expect(b.minLat).toBeGreaterThanOrEqual(TRICITY_BOUNDS.minLat);
+    expect(b.maxLat).toBeLessThanOrEqual(TRICITY_BOUNDS.maxLat);
+    expect(b.minLng).toBeGreaterThanOrEqual(TRICITY_BOUNDS.minLng);
+    expect(b.maxLng).toBeLessThanOrEqual(TRICITY_BOUNDS.maxLng);
   });
 });

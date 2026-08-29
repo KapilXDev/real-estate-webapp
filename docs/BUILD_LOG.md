@@ -9,22 +9,134 @@ without re-exploring. Newest entry at the top.
 
 ## NEXT UP
 
-Buyer-side is the priority (user set 70/30 buyer/seller), so in order:
-1. `/listings/[listingKey]` — full property detail page (gallery, specs, mortgage calc, tour CTA).
-2. `/search` — server-rendered filter + results grid, shareable/crawlable URLs.
-3. Map view with polygon draw (MapLibre, client component) layered onto `/search`.
-4. `/neighborhoods` index + `/neighborhoods/[slug]` pages w/ live listings, stats, FAQ schema.
-5. `/home-value` seller valuation funnel (highest-converting page on the site).
-6. `/about`, `/contact`, lead-capture API + storage.
-7. `sitemap.ts`, `robots.ts`, JSON-LD structured data.
+1. **User installs WSL** (admin shell + reboot) → `npm run db:up && npm run db:migrate && npm run db:seed`.
+   Expect and fix first-run SQL errors; 10 migrations have still never executed.
+2. Identity module vertical slice in `apps/api`: `main.ts` + app module, then entities → repository
+   → service → controller → DTOs.
+3. Testcontainers integration tests for RLS — every tier × visibility × status combination of
+   `can_view_listing()`.
+4. Catalog module, then `ApiProvider` in `apps/web` to replace `MockProvider`.
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
 
-- Market area + neighborhoods the realtor works — needed to replace placeholder neighborhood pages.
-  User said they'd provide it; not yet received. Everything is config-driven so this is a
-  one-file change when it arrives.
-- IDX/MLS feed status — user has not asked their broker yet.
-- Agent name, brokerage, license #, headshot, phone/email.
+- **Agent's real details** — name, firm, RERA registration per jurisdiction, headshot,
+  phone/WhatsApp/email. All placeholder in `apps/web/src/config/site.ts`.
+- **Real price bands + editorial review** for the 8 locality guides in
+  `apps/web/src/config/localities.ts`. Current copy is unverified draft.
+- Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-29 — Step 11: apps/web pivoted to India; @tricity/geo extracted
+
+**The website was still the US realtor site.** It rendered Washington Park / Downtown / West Side,
+USD prices, MLS attribution and Equal Housing. All of it is gone. 44 files touched, ~135 type
+errors worked through.
+
+## New shared package: `@tricity/geo`
+
+Geography moved out of `apps/api/src/database/seed/geography.ts` into `packages/geo`, imported by
+**both** the API seed and the website — so the DB and the site can never disagree about which
+sectors exist. Added lookup helpers (`getCity`, `getLocality`, `localitiesInCity`, `localityLabel`,
+`tricityBounds`) and `localityKey`.
+
+⚠️ **Locality slugs are unique per city, not globally.** Encoded that everywhere:
+- Routes are now `/localities/[city]/[locality]`, with a new `/localities/[city]` hub tier.
+- `ListingQuery` carries `LocalityRef[]`, URLs serialise `area=mohali/sector-70`.
+- `Listing` carries `citySlug` + `localitySlug`, never a bare slug.
+
+**Tests: 24 in geo** (19 moved + 5 new for the helpers, incl. one asserting
+`getLocality("chandigarh","sector-70")` is undefined while Mohali's exists).
+
+## `@tricity/domain` had ZERO tests — now 34
+
+These are the highest-blast-radius functions in the repo and were entirely unguarded. Added
+`money.spec.ts` + `area.spec.ts` pinning: the crore boundary, Indian digit grouping, Punjab
+marla = 272.25 / kanal = 5,445, `fromStored` preserving a legacy factor, and — the important one —
+that `parsePriceInput("85")` is ₹85, **not** ₹85 lakh. A silent 10⁵ promotion there would misprice
+a listing in a way that looks entirely plausible on the page.
+
+Also `formatPriceShort` ⟷ `parsePriceInput` round-trip, since one renders what the other reads back.
+
+## Listing model: RESO vocabulary deleted
+
+It implied a feed integration that will never exist. `mlsNumber` → `referenceCode` (prefixed `TE-`
+so it doesn't read as an industry identifier), `listOfficeName` → `listedByFirm`, `associationFee`
+→ `maintenanceCharges`, `lotSizeSquareFeet` → `plotArea`. US escrow statuses ("Pending", "Active
+Under Contract") → "Under Offer" (bayana taken).
+
+**Added, because they're what this market actually filters on:** `possession`
+(ready-to-move/under-construction/new-launch), `furnishing`, `facing`, `carpetArea` vs
+`builtUpArea` vs `plotArea` as separate `StoredArea` values, `reraAgentRegistration` (required, not
+optional) and `reraProjectRegistration`, `priceOnRequest`.
+
+Property types are now plot / kothi / builder-floor / flat / villa / SCO / SCF / booth / farmhouse.
+
+## Compliance: RERA replaces MLS/NAR
+
+Same structural defence, different law. `ListingAttribution` renders unconditionally on every card;
+`SiteFooter` carries **all three jurisdictions** (PbRERA, Chandigarh, HRERA Panchkula) because a
+Punjab registration does not cover the UT. `site.compliance.mlsDisclaimer`/`mlsCopyright`/
+`equalHousing` deleted; `reraForState()` resolves per listing from `@tricity/geo`'s `state`.
+
+## Mortgage → home loan, and the reason it matters
+
+`lib/mortgage.ts` → `lib/home-loan.ts`. Dropped PMI (doesn't exist here) and escrowed insurance
+(not standard). **Added stamp duty + registration + processing fee as an upfront-cash panel** —
+~8% in Punjab, **not financeable**, and the single most expensive thing an EMI-only calculator
+hides. Also models the lower female-buyer stamp duty rate, which is a real ~₹2 lakh saving on a
+₹1 crore purchase. Rates are marked verify-annually; they move in state budgets.
+
+## Content strategy — deliberately sparse
+
+`config/neighborhoods.ts` deleted; `config/localities.ts` is now an **editorial overlay** keyed by
+(city, locality), separate from geography facts. **Only the 8 localities with hand-written content
+get an indexed page** — 102 templated pages would be thin/doorway content and would damage the
+domain. `generateStaticParams` and the sitemap iterate `localitiesWithContent()`.
+
+⚠️ **All 8 guides and every price band are unverified draft copy.** Flagged loudly in-file.
+
+## Monorepo wiring fixed (three real traps)
+
+1. **Removed `"type": "module"`** from `packages/domain` and `packages/geo` — `apps/api` is CJS
+   (NestJS 11) and TS errors **TS1479** on a CJS→ESM static import.
+2. **`apps/api` `rootDir: "../../"`** — cross-package source otherwise violates rootDir (TS6059).
+3. **Internal imports must be extensionless** (`./area`, not `./area.js`). TS resolves the `.js`
+   form; **Turbopack does not** and the build dies with "Can't resolve ./area.js". Cost a full
+   build cycle to find.
+   `apps/web` also needed `transpilePackages` + its own `paths` (its tsconfig does not extend
+   `tsconfig.base.json`).
+
+## Verified against a running dev server, not just a build
+
+- `next build` ✓ **28 routes**; 5 city hubs + 8 locality guides SSG'd with 1h revalidate
+- **58 tests pass** (24 geo + 34 domain); `tsc --noEmit` clean on both `apps/web` and `apps/api`
+- All 15 routes HTTP 200
+- **0 USD-shaped prices**, 0 "Washington Park", 0 "MLS", 0 "Equal Housing" anywhere in the HTML
+- Filters: `city=mohali`, `area=mohali/sector-70` (19), `type=plot`, `possession=new-launch` (10),
+  `maxPrice=5000000` (3), impossible filter → empty state ✓
+- **Polygon draw still correct** — box over Mohali Sector 70 returns 19 Sector 70 + 2 adjacent
+  Sector 74 listings, and `poly + city=chandigarh` returns **0**. That last one is the real proof
+  the polygon is genuinely geographic.
+- `robots.txt` still `Disallow: /` on sample data ✓ (safety mechanism intact)
+- `sitemap.xml`: 122 URLs = 9 static + 5 city + 8 locality + 100 listings; no stale routes ✓
+- Listing detail: `SingleFamilyResidence`, `priceCurrency: INR`, `addressCountry: IN`, marla areas,
+  EMI + stamp duty panel, WhatsApp CTA ✓
+- `POST /api/leads` → 201, scoring intact (85 for both tour-request and home-valuation)
+
+**Bug found and fixed during verification:** the generator produced **"1 BHK Kothi"** — a kothi is a
+whole independent house and starts around 3 bedrooms. Bedroom ranges are now per property type
+(kothi 3-6, flat 1-4, villa 3-5, builder floor 2-4). Verified after the fix.
+
+## Also fixed
+- `apps/api` `test` script → `--passWithNoTests` (the geography spec moved to `packages/geo`, so
+  `nx run-many -t test` would otherwise fail on an empty workspace).
+- Root `CLAUDE.md` **rewritten** — it still described the US/IDX world and is the first thing a
+  fresh session reads, so it was actively misleading.
+
+## STATE OF THE BACKEND — unchanged, still blocked
+10 migrations and the seed remain **authored but NEVER EXECUTED**. `apps/api` still has no
+`main.ts` and no modules. WSL is still not installed, so Docker's engine cannot start.
 
 ---
 
