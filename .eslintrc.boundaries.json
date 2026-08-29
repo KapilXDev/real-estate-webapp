@@ -1,0 +1,34 @@
+{
+  "_comment": "Nx module boundary enforcement — this is what replaces Spring Modulith's build-time checks. Merged into the root ESLint config once Nx is installed.",
+  "rules": {
+    "@nx/enforce-module-boundaries": [
+      "error",
+      {
+        "enforceBuildableLibDependency": true,
+        "allow": [],
+        "depConstraints": [
+          {
+            "_comment": "Apps may depend on shared packages, never on each other.",
+            "sourceTag": "type:app",
+            "onlyDependOnLibsWithTags": ["type:contracts", "type:domain"]
+          },
+          {
+            "_comment": "contracts is the wire format — it must stay dependency-free so both the browser and every service can import it.",
+            "sourceTag": "type:contracts",
+            "onlyDependOnLibsWithTags": []
+          },
+          {
+            "_comment": "domain holds pure value objects (Money, Area). No I/O, no framework.",
+            "sourceTag": "type:domain",
+            "onlyDependOnLibsWithTags": ["type:contracts"]
+          },
+          {
+            "_comment": "Frontend must never import backend internals.",
+            "sourceTag": "scope:web",
+            "onlyDependOnLibsWithTags": ["type:contracts", "type:domain"]
+          }
+        ]
+      }
+    ]
+  }
+}

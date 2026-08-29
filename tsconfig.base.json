@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@tricity/contracts": ["packages/contracts/src/index.ts"],
+      "@tricity/contracts/*": ["packages/contracts/src/*"],
+      "@tricity/domain": ["packages/domain/src/index.ts"],
+      "@tricity/domain/*": ["packages/domain/src/*"]
+    }
+  },
+  "exclude": ["node_modules", "dist", ".next"]
+}

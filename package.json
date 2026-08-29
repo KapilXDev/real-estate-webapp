@@ -1,27 +1,24 @@
 {
-  "name": "real-estate-webapp",
+  "name": "tricity-estate",
   "version": "0.1.0",
   "private": true,
+  "description": "Real estate platform for the Chandigarh / Mohali / Kharar tricity market",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "web:dev": "npm run dev --workspace=@tricity/web",
+    "api:dev": "npm run start:dev --workspace=@tricity/api",
+    "db:up": "docker compose -f infra/docker/docker-compose.yml up -d postgres",
+    "db:down": "docker compose -f infra/docker/docker-compose.yml down",
+    "db:generate": "npm run db:generate --workspace=@tricity/api",
+    "db:migrate": "npm run db:migrate --workspace=@tricity/api",
+    "lint": "nx run-many -t lint",
+    "test": "nx run-many -t test",
+    "build": "nx run-many -t build"
   },
-  "dependencies": {
-    "maplibre-gl": "^6.6.0",
-    "next": "16.3.3",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.3.3",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -28,6 +28,63 @@ Buyer-side is the priority (user set 70/30 buyer/seller), so in order:
 
 ---
 
+## 2026-08-29 — Step 7: PIVOT — India market, NestJS backend, design phase
+
+**MAJOR PIVOT. Read this before touching anything from Steps 1-6.**
+
+**What changed:**
+- Market confirmed as **Chandigarh / Mohali / Kharar (India)**. **There is no MLS in India** —
+  no IDX, no RESO, no cooperative listing database. The entire US data-sourcing premise of
+  Phase 1 is void. **RERA replaces NAR/IDX** as the compliance regime (registration number must
+  appear on the website; up to ₹10 lakh penalty; Punjab RERA for Mohali/Kharar, separate
+  Chandigarh authority — the agent spans TWO jurisdictions).
+- User is a **software developer**, not a non-technical realtor. Earlier memory corrected.
+  They want architecture-level discussion and **approval gates before implementation**.
+- Scope is now a **professional multi-service web app**, not a static agent site.
+
+**Decisions locked this step:**
+| | |
+|---|---|
+| Backend | **NestJS + TypeScript** (reversed from Spring Boot — see ADR-001 in ARCHITECTURE.md) |
+| DB | PostgreSQL + **PostGIS**, **Drizzle** ORM (Prisma rejected: weak PostGIS) |
+| Architecture | Hybrid — modular core + media/notification/ingestion extracted |
+| Auth | Native JWT, Argon2id, rotating refresh w/ reuse detection |
+| Partners | **Partner accounts, they post their own** → real multi-tenancy + RLS required in v1 |
+| Deploy | **Local Docker Compose only** for now; K8s/Terraform deferred |
+| Team | 2-4 devs |
+| Monorepo | Nx (chosen over Turborepo for **module boundary tags** = Spring Modulith substitute) |
+
+**Why NestJS won over Spring Boot** (the deployment + team answers flipped it):
+local Compose with 6+ containers makes JVM memory (~400MB-1GB/service vs ~150MB Node) a real
+constraint on dev laptops; the frontend is already TS so a shared `contracts` package removes
+client/server drift; and NestJS's default shape *is* the requested DTO/DAO/repo/service/controller
+layering. Accepted loss: PostGIS support in TS ORMs is weaker — mitigated by choosing Drizzle
+(SQL-first) and keeping spatial predicates in explicit SQL in the repository layer.
+
+**Written this step (design only — NO code, NO installs):**
+- `docs/ARCHITECTURE.md` — ADR-001, service topology + why exactly those 3 are extracted,
+  per-module layering rules, repo layout, security posture, event topics, deferred list.
+- `docs/DATA_MODEL.md` — full schema design. Three shaping decisions:
+  1. **`property` separate from `listing`** — partner brokers listing the same kothi must not
+     produce duplicate search results.
+  2. **Area stored twice** (`area_sqft` canonical + `area_input_value`/`area_input_unit`) because
+     marla/kanal/gaj don't divide cleanly into sq ft. Punjab marla = 272.25 sq ft, kanal = 5,445
+     sq ft — but marla is regionally ambiguous, so the conversion factor is stored per row.
+  3. **Money as `numeric(16,2)` INR**, lakh/crore formatting at the edge only.
+  Plus RLS policies (partners are competing businesses in one DB), audit log, migration order.
+
+**Status of Phase 1 code:** frontend/design system/components/geo math/lead scoring are reusable.
+The `ListingProvider`/RESO/IDX abstraction and US compliance layer are **dead** (~30%).
+
+## NEXT UP (awaiting user approval — do not start unilaterally)
+1. Approve/amend the repo restructure into Nx monorepo (`apps/web` move is destructive-ish).
+2. Approve the dependency list (user explicitly said: **tell them before installing anything**,
+   they will signal when to add cache/Redis).
+3. Answer the 3 open questions (buyer logins vs phone-OTP; partner cross-visibility; languages).
+4. Then: migrations 0001-0009, seed tricity geography, identity module first vertical slice.
+
+---
+
 ## 2026-08-29 — Step 6: Phase 1 complete — all pages, SEO, seller funnel
 
 **PHASE 1 IS COMPLETE AND LAUNCHABLE** (pending real content + IDX feed).

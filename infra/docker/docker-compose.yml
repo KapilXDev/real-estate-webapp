@@ -1,0 +1,60 @@
+# Local development stack.
+#
+# Deliberately starting with Postgres ONLY. MinIO and Redpanda are defined below but commented
+# out — there is no point running them while the schema is still settling, and fewer containers
+# means a faster, lighter dev loop. Uncomment each as the feature that needs it lands:
+#   minio    -> when media upload is implemented
+#   redpanda -> when the first real event fan-out exists (saved-search matching)
+
+services:
+  postgres:
+    # PostGIS image rather than plain postgres — spatial support is required from migration 0001,
+    # and retrofitting the extension into an existing volume is avoidable pain.
+    image: postgis/postgis:16-3.4
+    container_name: tricity-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tricity
+      POSTGRES_PASSWORD: tricity_dev_password
+      POSTGRES_DB: tricity
+      # Deterministic collation so ORDER BY behaves identically across dev machines.
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Migrations and tests must wait for readiness, not just for the container to start.
+      test: ["CMD-SHELL", "pg_isready -U tricity -d tricity"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- Enable when media upload lands -------------------------------------------------
+  # minio:
+  #   image: minio/minio:latest
+  #   container_name: tricity-minio
+  #   command: server /data --console-address ":9001"
+  #   environment:
+  #     MINIO_ROOT_USER: tricity
+  #     MINIO_ROOT_PASSWORD: tricity_dev_password
+  #   ports: ["9000:9000", "9001:9001"]
+  #   volumes: [minio_data:/data]
+
+  # --- Enable when the first event fan-out lands --------------------------------------
+  # redpanda:
+  #   image: redpandadata/redpanda:latest
+  #   container_name: tricity-redpanda
+  #   command:
+  #     - redpanda start
+  #     - --smp 1
+  #     - --overprovisioned
+  #     - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+  #     - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+  #   ports: ["9092:9092", "9644:9644"]
+  #   volumes: [redpanda_data:/var/lib/redpanda/data]
+
+volumes:
+  postgres_data:
+  # minio_data:
+  # redpanda_data:
