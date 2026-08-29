@@ -116,21 +116,36 @@ figures, before launch.
 - **Phase 3 — NOT STARTED.** AI natural-language search, grounded concierge chatbot,
   speed-to-lead auto-WhatsApp (TODO marker in `src/app/api/leads/route.ts`), automated market emails.
 
-## 🚧 Hard blocker: WSL is not installed
+## 👉 START HERE — the blocker should now be cleared
 
-Docker Desktop is installed but **its engine cannot start — Windows requires WSL2**. So the 10
-migrations have **never been executed** and the seed has never been applied. Treat all SQL as
-unverified; expect first-run syntax errors, which is normal.
-
-Needs an **Administrator** shell and a reboot, so it is a genuine hand-off to the user:
+**On 2026-08-29 the user installed WSL and Docker Desktop and rebooted.** The long-standing
+blocker is expected to be gone. **Do not re-diagnose the machine** — virtualization is on in BIOS,
+`winget` works, Docker Desktop is installed. Just verify and go:
 
 ```
-wsl --install          # then REBOOT
-npm run db:up && npm run db:migrate && npm run db:seed
+docker version                 # engine should now respond
+npm run db:up                  # PostGIS via infra/docker/docker-compose.yml
+npm run db:migrate             # 11 migrations — NEVER RUN BEFORE
+npm run db:seed                # 6 cities, 102 localities
 ```
 
-Machine state already verified — do not re-diagnose: virtualization is enabled in BIOS,
-`winget` works, no PostGIS in winget. Details in `docs/SETUP.md`.
+**Expect the migrations to fail on the first attempt.** All 11 were authored without a database to
+run them against, so syntax and ordering errors are likely and are *normal* — fix them in place
+rather than treating them as a design problem. Highest-risk files: `0011_auth_lookup.sql`
+(SECURITY DEFINER functions, written last and never parsed) and `0005_catalog.sql` (PostGIS
+columns + generated tsvector).
+
+After migrations pass, verify PostGIS is real:
+`SELECT PostGIS_Version();` and `EXPLAIN` an `ST_Intersects` query to confirm the GiST index is used.
+
+Then the first tests worth writing, in order:
+1. **That `FORCE ROW LEVEL SECURITY` actually bites** — one org must not be able to read another's
+   listing. This is the single most valuable test in the repo; see the RLS note below for why.
+2. `can_view_listing()` across every tier × visibility × status.
+3. Refresh-token rotation: presenting a used token must revoke the whole family.
+
+If Docker still will not start, the fallback (native Postgres + PostGIS, no Testcontainers) is
+written up in `docs/SETUP.md`, along with why it was rejected.
 
 ## Backend rules that are easy to get catastrophically wrong
 

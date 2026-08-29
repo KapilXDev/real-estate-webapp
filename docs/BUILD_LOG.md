@@ -7,16 +7,33 @@ without re-exploring. Newest entry at the top.
 
 ---
 
-## NEXT UP
+## NEXT UP — resume point for a fresh session
 
-1. **User installs WSL** (admin shell + reboot) → `npm run db:up && npm run db:migrate && npm run db:seed`.
-   Expect and fix first-run SQL errors; **11** migrations have still never executed.
-2. Testcontainers integration tests, in priority order:
-   - `can_view_listing()` — every tier × visibility × status combination.
-   - **That `FORCE ROW LEVEL SECURITY` actually bites** (see Step 12) — a test that one org cannot
-     read another's listing is the single most valuable test in this repo.
-   - Refresh-token rotation and reuse detection: presenting a used token must revoke the family.
-3. Catalog module, then `ApiProvider` in `apps/web` to replace `MockProvider`.
+**Status as of the last session: WSL + Docker Desktop were installed by the user and the machine
+was rebooted. The blocker is expected to be CLEARED.** Everything below is now unblocked.
+
+1. **Bring the database up and run the migrations for the first time.**
+   ```
+   docker version && npm run db:up && npm run db:migrate && npm run db:seed
+   ```
+   **Expect failures on the first run.** All 11 migrations were authored without a database to
+   execute them against — syntax and ordering errors are normal here, not a sign of bad design.
+   Fix in place. Riskiest files: `0011_auth_lookup.sql` (SECURITY DEFINER, written last, never
+   parsed) and `0005_catalog.sql` (PostGIS + generated tsvector).
+2. Verify PostGIS: `SELECT PostGIS_Version();` and `EXPLAIN` an `ST_Intersects` query to confirm
+   the GiST index is actually used.
+3. Smoke the identity module against a real Postgres — it has never issued a query. Boot the API
+   (`npm run api:dev`) and exercise staff login and the phone-OTP flow end to end. In development
+   the OTP is returned as `devCode`, so no SMS provider is needed.
+4. Testcontainers integration tests, in priority order:
+   - **That `FORCE ROW LEVEL SECURITY` actually bites** — one org must not read another's listing.
+     Single most valuable test in the repo; see Step 12 for why it was a silent no-op before.
+   - `can_view_listing()` across every tier × visibility × status.
+   - Refresh-token rotation and reuse detection: a used token must revoke the whole family.
+5. Then: catalog module, then `ApiProvider` in `apps/web` to replace `MockProvider`.
+
+**Working tree is clean at `1bd1bd7`.** Nothing is half-finished; steps 11 and 12 are both
+committed whole.
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
 
