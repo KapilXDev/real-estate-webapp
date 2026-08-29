@@ -108,8 +108,11 @@ figures, before launch.
   listings, about, contact, EMI/stamp-duty calculator, market reports, sitemap, robots, JSON-LD.
 - **Phase 2 — search/filters/saved-search/lead scoring done.** Remaining: user accounts +
   favourites, and actually *sending* alerts (needs an email/WhatsApp provider).
-- **Backend — SKELETAL.** 10 migrations + geography seed authored; `apps/api` has no `main.ts` and
-  no modules yet. **Nothing DB-backed has ever run** — see the blocker below.
+- **Backend — identity slice built, unrun.** `apps/api` boots: helmet, CORS, zod-validated config,
+  global throttler, JWT guard, health probes, and a full identity module (staff email+password,
+  consumer phone-OTP + linked email/password, rotating refresh tokens with reuse detection).
+  Verified against a live process. **But 11 migrations have never executed**, so no query has ever
+  reached a real Postgres — see the blocker below.
 - **Phase 3 — NOT STARTED.** AI natural-language search, grounded concierge chatbot,
   speed-to-lead auto-WhatsApp (TODO marker in `src/app/api/leads/route.ts`), automated market emails.
 
@@ -128,6 +131,29 @@ npm run db:up && npm run db:migrate && npm run db:seed
 
 Machine state already verified — do not re-diagnose: virtualization is enabled in BIOS,
 `winget` works, no PostGIS in winget. Details in `docs/SETUP.md`.
+
+## Backend rules that are easy to get catastrophically wrong
+
+- **`ENABLE ROW LEVEL SECURITY` is not enough.** Postgres exempts the table OWNER from its own
+  policies, and the API connects as the migration role. Every table under RLS also needs
+  `FORCE ROW LEVEL SECURITY` — without it the policies are silent no-ops and partners can read
+  each other's inventory. Fixed in `0010`; do not "simplify" it back.
+- **Pre-authentication lookups go through the `SECURITY DEFINER` functions in `0011`**, never by
+  disabling RLS and never by setting `is_platform_admin` (which would grant an unauthenticated
+  caller admin over every table). Anything added there must pin `search_path` and return the
+  minimum columns.
+- **Always `withTenant()`, never raw `this.sql`, for tenant-scoped queries.** It uses
+  `set_config(..., true)` — the parameterised `SET LOCAL`. A plain `SET` persists on a pooled
+  connection and leaks the previous request's org to the next one.
+- **`refresh_token` holds two kinds of principal** (`user_id` XOR `contact_id`, enforced by CHECK).
+  Both auth services must reject a token of the wrong kind, or a consumer session could be
+  upgraded to a staff one.
+- **NestJS satellite packages at v12 are pure ESM** and cannot be imported from this CJS app —
+  keep `@nestjs/*` on the 11 line. `@nestjs/config` and `@nestjs/passport` were removed; config is
+  zod, the guard is hand-written.
+- **If Nest says a package is missing that plainly exists**, check where npm hoisted it — a stale
+  lockfile nested `platform-express` under `apps/api` while `core` was at the root, and the error
+  message blamed the wrong thing.
 
 ## Gotchas worth knowing before you edit
 

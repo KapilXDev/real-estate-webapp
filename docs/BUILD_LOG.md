@@ -10,12 +10,13 @@ without re-exploring. Newest entry at the top.
 ## NEXT UP
 
 1. **User installs WSL** (admin shell + reboot) → `npm run db:up && npm run db:migrate && npm run db:seed`.
-   Expect and fix first-run SQL errors; 10 migrations have still never executed.
-2. Identity module vertical slice in `apps/api`: `main.ts` + app module, then entities → repository
-   → service → controller → DTOs.
-3. Testcontainers integration tests for RLS — every tier × visibility × status combination of
-   `can_view_listing()`.
-4. Catalog module, then `ApiProvider` in `apps/web` to replace `MockProvider`.
+   Expect and fix first-run SQL errors; **11** migrations have still never executed.
+2. Testcontainers integration tests, in priority order:
+   - `can_view_listing()` — every tier × visibility × status combination.
+   - **That `FORCE ROW LEVEL SECURITY` actually bites** (see Step 12) — a test that one org cannot
+     read another's listing is the single most valuable test in this repo.
+   - Refresh-token rotation and reuse detection: presenting a used token must revoke the family.
+3. Catalog module, then `ApiProvider` in `apps/web` to replace `MockProvider`.
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
 
@@ -24,6 +25,117 @@ without re-exploring. Newest entry at the top.
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-29 — Step 12: Identity module + two schema bugs found before they shipped
+
+**`apps/api` went from 6 plumbing files to a running NestJS application.** It boots, serves
+health checks, enforces auth and validation, and rate-limits — all verified against a live process.
+
+## 🔴 TWO SCHEMA BUGS FOUND WHILE IMPLEMENTING AGAINST THE SQL
+
+Both were in migrations that had never run, so both were fixed at source rather than patched.
+
+### 1. RLS was a complete no-op (`0010_rls.sql`)
+
+The file used `ENABLE ROW LEVEL SECURITY` only. **Postgres exempts a table's OWNER from its own
+policies**, and the API connects as the same role that runs the migrations. Every policy in that
+file — the entire cross-tenant protection, the thing the whole multi-tenant design exists for —
+would have silently done nothing. No error, no warning, and partner brokerages able to read each
+other's inventory.
+
+Fixed by adding `FORCE ROW LEVEL SECURITY` to all four tables.
+
+That immediately created a chicken-and-egg problem: login must read `app_user` before it knows the
+org, but the policy needs `current_org_id()`. The tempting fixes are all wrong — dropping RLS on
+`app_user` reopens the hole, and setting `is_platform_admin` at login grants an *unauthenticated*
+caller admin over every table. So **`0011_auth_lookup.sql`** adds three narrow `SECURITY DEFINER`
+functions (`auth_lookup_staff`, `auth_lookup_refresh_token`, `auth_revoke_token_family`) — a
+deliberate keyhole, not an open door. All pin `search_path` (unpinned is the classic SECURITY
+DEFINER privilege escalation) and return only login-relevant columns.
+
+### 2. `refresh_token` could not store consumer sessions (`0003_identity.sql`)
+
+`user_id` had `REFERENCES app_user(id)`, but the agreed auth model gives **contacts** sessions too,
+and a contact is not an `app_user`. Every buyer login would have failed on a foreign key violation
+the first time it ran.
+
+Fixed with two nullable FKs (`user_id`, `contact_id`) plus a CHECK enforcing that **exactly one**
+is set, so "both" and "neither" are unrepresentable. Chose that over a polymorphic id with no FK
+because losing referential integrity means deleting a principal silently orphans live sessions.
+`auth_lookup_refresh_token` LEFT JOINs accordingly and returns `principal_kind` so callers never
+infer it from which column is null. Both auth services reject a token of the wrong kind — a
+consumer token presented to the staff refresh endpoint cannot be upgraded, and vice versa.
+
+## Written this step
+
+- **`main.ts`** — helmet, CORS, `trust proxy` (without it every client looks like the proxy and
+  per-IP limits collapse into one shared bucket), global ValidationPipe with
+  `forbidNonWhitelisted`.
+- **`config/configuration.ts`** — zod-validated env. **No default JWT secret, deliberately**: a
+  fallback would mean every deployment that forgot to set one shares a signing key. `JWT_ACCESS_TTL`
+  is regex-checked because jsonwebtoken treats a bare numeric string differently from a number and
+  a typo like "15mins" fails unpredictably.
+- **`database/database.service.ts`** — `withTenant()` runs work in a transaction with
+  `set_config(..., true)` (the parameterised `SET LOCAL`). **`SET LOCAL`, never `SET`**: postgres.js
+  pools connections, so a plain `SET` would leak the previous request's org id to whoever borrows
+  that connection next. `withoutTenantForAuth()` is named to be conspicuous in review.
+- **`identity/`** — `PasswordService` (Argon2id, OWASP params, plus `fakeVerify` so the
+  unknown-email path burns comparable time and does not become an account-enumeration oracle),
+  `TokenService` (opaque random refresh tokens — SHA-256 not Argon2, since 256 bits of CSPRNG
+  output has no dictionary to attack — with family rotation and reuse detection),
+  `OtpService`, `StaffAuthService`, `ContactAuthService`, DTOs, `JwtAuthGuard`, module.
+- **`health/`** — separate liveness and readiness. Liveness deliberately does NOT touch the
+  database: wiring a DB check to liveness turns a brief DB blip into a restart storm.
+- **Drizzle schema** in `database/schema/` — mirrors the SQL, does not generate it.
+
+**Consumer auth is the linked-identity model the user asked for:** one `contact` row is the person,
+each `contact_identity` row is a way of proving it. Phone OTP creates the account on first verify;
+email+password can be linked afterwards to the *already-proven* identity. Adding Google later is a
+data change, not a schema change.
+
+**OTP hardening** — SMS-pumping fraud is a direct financial loss, not just abuse, so: per-destination
+cooldown, 3/min per IP on the request endpoint, prior challenges consumed on resend (otherwise ten
+resends give ten simultaneous guesses), attempts incremented *before* comparison (so disconnecting
+mid-verify still costs an attempt), constant-time hash comparison.
+
+## ⚠️ DEPENDENCY PROBLEMS FOUND — the previous step's install was not what it claimed
+
+- **`@nestjs/throttler` was in `apps/api/package.json` but NEVER ACTUALLY INSTALLED.** Step 9
+  recorded pinning the whole stack to NestJS 11 *because of* throttler's peer cap — but the package
+  itself was absent from `node_modules`. Now installed at 6.5.0.
+- **`@nestjs/jwt@12`, `@nestjs/config@12` and `@nestjs/passport@12` are pure ESM** (`"type":
+  "module"`) while `@nestjs/common`/`core` are CommonJS 11. TS1479 on import. Downgraded jwt to
+  11.0.2; **removed `@nestjs/config`, `@nestjs/passport`, `passport`, `passport-jwt`** entirely —
+  config is zod and the guard is hand-written, so they were unused surface.
+- **A stale `package-lock.json` was nesting `@nestjs/platform-express` under `apps/api`** while
+  `@nestjs/core` sat at the root, so Nest's loader could not resolve the HTTP driver and the app
+  refused to start with a misleading "please install @nestjs/platform-express". Regenerating the
+  lockfile fixed it. Worth remembering: if Nest claims a package is missing that is plainly
+  present, check *where* it is hoisted.
+
+## Verified against a running process, not just a typecheck
+
+- `nest build` ✓, `tsc --noEmit` clean on `apps/api` and `apps/web`, 58 tests still pass, `next build` ✓
+- **API boots** → `GET /api/health/live` → `{"status":"ok"}`
+- Guard: no token → 401 "Missing bearer token"; garbage token → 401 "Invalid or expired token"
+- Validation: bad email, short password, and **`isAdmin` rejected as "property isAdmin should not
+  exist"** — `forbidNonWhitelisted` doing exactly the job it is there for
+- Phone normalisation: `"12345"` → 400; **`"9876543210"` → normalised to `+919876543210`** and
+  reached the database layer (500, because Postgres is down — the expected failure)
+- **Throttling fires** — repeated OTP requests return 429
+- **Config fails fast**: unset secrets abort startup with a per-field list, rather than booting
+
+## STILL UNVERIFIED — everything that touches the database
+
+11 migrations have never executed. The SQL is unrun, the SECURITY DEFINER functions have never
+been called, and no query in the identity module has ever reached a real Postgres. Expect
+first-run errors; that is normal, not a sign of a bad design.
+
+**Known rough edge:** a database outage currently surfaces as a bare 500. It should be a 503 with
+a retry hint. Left as-is deliberately rather than guessing at the shape before any real connection
+error has ever been observed.
 
 ---
 

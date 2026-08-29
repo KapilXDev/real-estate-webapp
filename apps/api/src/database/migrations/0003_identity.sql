@@ -49,31 +49,10 @@ CREATE TABLE app_user (
 CREATE INDEX app_user_org_idx ON app_user (organization_id, status);
 
 -- =========================================================================================
--- Refresh tokens: rotating, with reuse detection.
---
--- family_id groups one rotation chain. Presenting a token that has already been used means
--- either theft or a replay, so the correct response is to revoke the ENTIRE family rather
--- than just reject the request. This is the standard OAuth 2.1 recommendation and it is the
--- single highest-value thing in this table.
--- =========================================================================================
-CREATE TABLE refresh_token (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id    uuid        NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  family_id  uuid        NOT NULL,
-  token_hash text        NOT NULL UNIQUE,        -- SHA-256; the raw token is never stored
-  expires_at timestamptz NOT NULL,
-  used_at    timestamptz,
-  revoked_at timestamptz,
-  user_agent text,
-  ip         inet,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX refresh_token_family_idx ON refresh_token (family_id);
-CREATE INDEX refresh_token_user_idx   ON refresh_token (user_id);
-
--- =========================================================================================
 -- Consumers (buyers/sellers). Separate from app_user so tenant RLS stays simple to reason
 -- about: a contact belongs to no organisation.
+--
+-- Declared BEFORE refresh_token because that table references it.
 -- =========================================================================================
 CREATE TABLE contact (
   id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -109,6 +88,46 @@ CREATE TABLE contact_identity (
 CREATE INDEX contact_identity_contact_idx ON contact_identity (contact_id);
 
 -- =========================================================================================
+-- Refresh tokens: rotating, with reuse detection.
+--
+-- family_id groups one rotation chain. Presenting a token that has already been used means
+-- either theft or a replay, so the correct response is to revoke the ENTIRE family rather
+-- than just reject the request. This is the standard OAuth 2.1 recommendation and it is the
+-- single highest-value thing in this table.
+--
+-- ⚠️ TWO KINDS OF PRINCIPAL, ONE TABLE.
+-- Staff (app_user) and consumers (contact) both hold sessions, and they are different tables
+-- with no common parent. The options were a polymorphic `principal_id` with no foreign key,
+-- or two nullable columns with a CHECK. The latter is used here because dropping the FK would
+-- mean deleting a user or contact silently orphans live sessions — exactly the kind of row
+-- that later authenticates as a principal that no longer exists.
+--
+-- The CHECK enforces that EXACTLY one is set, so "neither" and "both" are unrepresentable
+-- rather than merely discouraged.
+-- =========================================================================================
+CREATE TABLE refresh_token (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    uuid        REFERENCES app_user(id) ON DELETE CASCADE,
+  contact_id uuid        REFERENCES contact(id)  ON DELETE CASCADE,
+  family_id  uuid        NOT NULL,
+  token_hash text        NOT NULL UNIQUE,        -- SHA-256; the raw token is never stored
+  expires_at timestamptz NOT NULL,
+  used_at    timestamptz,
+  revoked_at timestamptz,
+  user_agent text,
+  ip         inet,
+  created_at timestamptz NOT NULL DEFAULT now(),
+
+  CONSTRAINT refresh_token_one_principal CHECK (
+    (user_id IS NOT NULL AND contact_id IS NULL)
+    OR (user_id IS NULL AND contact_id IS NOT NULL)
+  )
+);
+CREATE INDEX refresh_token_family_idx  ON refresh_token (family_id);
+CREATE INDEX refresh_token_user_idx    ON refresh_token (user_id)    WHERE user_id IS NOT NULL;
+CREATE INDEX refresh_token_contact_idx ON refresh_token (contact_id) WHERE contact_id IS NOT NULL;
+
+-- =========================================================================================
 -- OTP challenges.
 --
 -- Codes are hashed, single-use, attempt-limited and short-lived. OTP endpoints are the most
@@ -127,3 +146,6 @@ CREATE TABLE otp_challenge (
   CONSTRAINT otp_attempts_bounded CHECK (attempts >= 0 AND attempts <= 10)
 );
 CREATE INDEX otp_active_idx ON otp_challenge (destination, purpose) WHERE consumed_at IS NULL;
+
+-- Cooldown and cleanup both scan by recency for a destination.
+CREATE INDEX otp_recent_idx ON otp_challenge (destination, purpose, created_at DESC);

@@ -12,6 +12,21 @@
 --   SET LOCAL app.is_platform_admin   = 'true' | 'false';
 -- SET LOCAL (not SET) so the value dies with the transaction and cannot leak across pooled
 -- connections — with a shared pool, a plain SET would be a cross-tenant disaster.
+--
+-- ⚠️⚠️ ENABLE IS NOT ENOUGH — SEE `FORCE ROW LEVEL SECURITY` BELOW.
+--
+-- Postgres exempts a table's OWNER from its own row-level policies. `ENABLE ROW LEVEL SECURITY`
+-- alone therefore does nothing at all when the application connects as the same role that ran
+-- the migrations, which is exactly what happens with a single-user local Compose setup. Every
+-- policy in this file would be a silent no-op: no error, no warning, and every partner able to
+-- read every rival's inventory.
+--
+-- `FORCE ROW LEVEL SECURITY` removes the owner exemption. It is applied to every table below.
+--
+-- Consequence to be aware of: the API can no longer read `app_user` before it knows which
+-- organisation the user belongs to, because the policy needs `current_org_id()` — which is a
+-- chicken-and-egg problem at login. That is solved by the SECURITY DEFINER lookup function in
+-- 0011, NOT by weakening this file.
 
 -- Read the current org, returning NULL rather than erroring when unset (e.g. migrations,
 -- background jobs, anonymous public browsing).
@@ -72,6 +87,7 @@ REVOKE ALL ON FUNCTION can_view_listing(uuid, listing_visibility, listing_status
 -- Policies
 -- =========================================================================================
 ALTER TABLE listing ENABLE ROW LEVEL SECURITY;
+ALTER TABLE listing FORCE  ROW LEVEL SECURITY;
 CREATE POLICY listing_visibility_policy ON listing
   FOR SELECT USING (can_view_listing(organization_id, visibility, status));
 -- Writes are always restricted to your own organisation, regardless of read tier.
@@ -80,17 +96,20 @@ CREATE POLICY listing_write_policy ON listing
   WITH CHECK (organization_id = current_org_id() OR is_platform_admin());
 
 ALTER TABLE lead ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead FORCE  ROW LEVEL SECURITY;
 -- Leads are never shared across the network — they are the commercial asset.
 CREATE POLICY lead_tenant_policy ON lead
   FOR ALL USING (organization_id = current_org_id() OR is_platform_admin())
   WITH CHECK (organization_id = current_org_id() OR is_platform_admin());
 
 ALTER TABLE app_user ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_user FORCE  ROW LEVEL SECURITY;
 CREATE POLICY app_user_tenant_policy ON app_user
   FOR ALL USING (organization_id = current_org_id() OR is_platform_admin())
   WITH CHECK (organization_id = current_org_id() OR is_platform_admin());
 
 ALTER TABLE partner_relationship ENABLE ROW LEVEL SECURITY;
+ALTER TABLE partner_relationship FORCE  ROW LEVEL SECURITY;
 -- Both sides of the relationship can see it; only the host can change it.
 CREATE POLICY partner_read_policy ON partner_relationship
   FOR SELECT USING (
