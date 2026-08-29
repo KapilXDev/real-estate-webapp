@@ -28,6 +28,156 @@ Buyer-side is the priority (user set 70/30 buyer/seller), so in order:
 
 ---
 
+## 2026-08-29 — Step 10: BLOCKED — Docker missing because WSL is not installed
+
+**User reported Docker Desktop showed "a requirement issue" and asked me to install the
+prerequisite. Root cause diagnosed; the install itself needs elevation + reboot, so it is on
+the user.**
+
+## Root cause
+**WSL is not installed.** Docker Desktop on Windows requires WSL2.
+`wsl --status` → *"The Windows Subsystem for Linux is not installed. You can install by running
+'wsl.exe --install'."* That is the requirement error the installer showed.
+
+## Machine state (verified this step — do NOT re-diagnose)
+| Check | Result |
+|---|---|
+| Windows | 11 Pro 10.0.26200 — supported |
+| `HypervisorPresent` | **True** ✅ |
+| `VirtualizationFirmwareEnabled` | **True** ✅ — BIOS virtualization already on, no BIOS trip needed |
+| `wsl.exe` binary | present at C:\WINDOWS\system32\wsl.exe, but WSL not installed |
+| Docker binary / service / Desktop.exe | **none** — nothing was actually installed |
+| `winget` | available ✅ |
+| Agent shell elevation | **NOT elevated** ❌ |
+| `Get-WindowsOptionalFeature` | fails — needs admin |
+
+## What blocks me specifically
+`wsl --install` requires an Administrator shell **and a reboot**. `winget install Docker.DockerDesktop`
+requires admin. The agent shell is non-elevated and non-interactive, so a UAC prompt cannot be
+completed from here. This is a genuine hand-off, not a skipped step.
+
+## Package research done (don't redo)
+- winget HAS: `PostgreSQL.PostgreSQL.17` (17.11-1), `PostgreSQL.PostgreSQL.18` (18.6-1)
+- winget does **NOT** have PostGIS. PostGIS installs via EDB StackBuilder
+  (*Application Stack Builder → Spatial Extensions → PostGIS*) or postgis.net/windows_downloads/
+- Docker Desktop package id: `Docker.DockerDesktop`
+
+## Written this step
+- **`docs/SETUP.md`** — full prerequisite guide, exact commands, expected seed output, and the
+  native-Postgres fallback with its trade-off spelled out.
+
+## Recovery commands (for the user, in an ADMIN PowerShell)
+```
+wsl --install                 # then REBOOT
+winget install --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
+# launch Docker Desktop once, then:
+npm run db:up && npm run db:migrate && npm run db:seed
+```
+
+## Fallback considered and NOT recommended
+Native PostgreSQL + PostGIS (no Docker) would unblock migrations/seed today, but **Testcontainers
+needs Docker** — so the RLS integration tests could not run. `can_view_listing()` is the function
+that leaks inventory between competing brokerages if wrong; shipping it untested is the one
+trade-off not worth making. Documented in SETUP.md as an option, with that caveat.
+
+## STATE OF THE CODE — unchanged from Step 9, still true
+- 10 migrations **authored but NEVER EXECUTED**. Treat all SQL as unverified until it hits a real
+  Postgres. Expect to fix syntax errors on first run — that is normal, not a sign of a bad design.
+- Seed authored, never applied.
+- 19 geography tests **do pass** (`npx vitest run --root apps/api`) — they need no DB.
+- `apps/web` builds (18 routes) but still renders the OLD US placeholder neighborhoods; not yet
+  wired to the API.
+
+## NEXT UP once Docker runs
+1. `npm run db:up && npm run db:migrate && npm run db:seed` — expect and fix first-run SQL errors.
+2. Verify PostGIS: `SELECT PostGIS_Version();` and confirm 102 localities with GiST indexes used
+   (`EXPLAIN` a `ST_Intersects` query).
+3. Identity module vertical slice: entities → repository → service → controller → DTOs.
+4. Testcontainers integration tests for RLS — every tier x visibility x status combination of
+   `can_view_listing()`.
+
+---
+
+## 2026-08-29 — Step 9: Dependencies installed, migrations + geography seed written
+
+**Done:**
+
+**Installs (user approved).** NestJS **11** stack, Drizzle, argon2, testcontainers, vitest, nx.
+- ⚠️ **Pinned to NestJS 11 deliberately, not 12.** `@nestjs/throttler@6.5.0` peer-caps at
+  `^11.0.0`, which is why npm silently backtracked `@nestjs/common` to 11.2.3 and then failed
+  ERESOLVE on `@nestjs/testing@12`. Rate limiting is a stated security requirement, so keeping
+  throttler beat chasing 12. Revisit when throttler ships v12 support.
+- Ran `npm approve-scripts` for argon2/esbuild/nx/unrs-resolver/protobufjs/cpu-features/ssh2 —
+  argon2 needs node-gyp and silently no-ops otherwise. Verified: hash produces `$argon2id$` ✓
+- **Held back as agreed:** Redis/cache, kafkajs.
+
+**TypeScript 6.0.3 is installed** — `moduleResolution: node10` and `baseUrl` are both deprecated
+and error out. Moved the workspace to `module/moduleResolution: node16` and dropped `baseUrl`
+(TS 5+ resolves `paths` relative to the tsconfig). `apps/api` needs explicit
+`types: ["node"]` + `typeRoots` because @types/node at the workspace root isn't auto-discovered.
+
+**10 SQL migrations** in `apps/api/src/database/migrations/`.
+**Decision: hand-written SQL, NOT drizzle-kit generate.** The schema needs PostGIS geography
+columns, a generated tsvector, CHECK constraints, SECURITY DEFINER functions and RLS policies —
+Drizzle's generator models none of these well, and fighting a generator into emitting correct
+security policy SQL is a bad trade when a wrong policy is a cross-tenant leak. Drizzle still
+provides query typing; it just doesn't own DDL.
+
+Notable schema choices worth not re-deriving:
+- `0003` refresh tokens use `family_id` + reuse detection — replaying a used token revokes the
+  whole family (OAuth 2.1 guidance).
+- `0005` CHECK constraints: carpet area <= built-up area, floor <= total floors, ACTIVE listings
+  must have `published_at`. Catching nonsense at write time, not in search results.
+- `0005` `search_vector` is a GENERATED column, not a trigger — cannot drift.
+- `0010` `SET LOCAL` (not `SET`) for `app.current_org_id`: with a shared pool a plain SET leaks
+  across tenants. `can_view_listing()` is SECURITY DEFINER + STABLE.
+- `0009` audit_log has **no FKs on purpose** — an audit trail must survive deletion of the actor
+  it describes.
+- `property`/`locality`/`city`/`project` are deliberately NOT under RLS: they describe shared
+  physical reality, and duplicate detection must see across orgs to work at all.
+
+**Migration runner** (`migrate.ts`): per-file SHA-256 checksums (editing an applied migration is
+a hard error, not a silent no-op), pg advisory lock against concurrent migrators, each file in
+its own transaction. Line endings normalised so Windows checkouts agree with Linux CI.
+
+**Geography seed** — 6 cities, **102 localities**: Chandigarh 55 sectors (13 correctly omitted —
+Le Corbusier left it out), Mohali 11 phases + 26 sectors (66-91; both naming systems needed,
+buyers use each), Kharar 5 named colonies, Zirakpur 3, New Chandigarh 2.
+- ⚠️ **City centroids are real. Locality centroids are GENERATED from a grid model and are off
+  by roughly 1-2km** (e.g. generated Sector 17 = 30.7596,76.7683 vs actual ~30.7410,76.7822).
+  Every row written with `is_approximate = true`, `boundary_source = 'GENERATED_RADIUS'`, so the
+  replacement job finds them with one WHERE clause. **Overpass query for the real OSM polygons is
+  in the header of `seed/geography.ts`.** Must be replaced before launch — draw-search accuracy
+  depends on it.
+- Seed is idempotent and will NOT overwrite a boundary once `is_approximate = false`, nor
+  clobber hand-written editorial copy.
+
+**19 tests passing** (`geography.spec.ts`) — bounding box, slug uniqueness, Sector 13 absence,
+grid spread, adjacent-sector spacing, and **GeoJSON [lng,lat] ordering** (swapping those is the
+classic PostGIS bug and silently relocates everything to the Indian Ocean).
+
+**Verified:** `tsc --noEmit` clean on apps/api; `vitest run` 19/19; `next build` succeeds from
+`apps/web` after the move (18 routes).
+
+**Committed:** `f2315d7`.
+
+## BLOCKER
+**Docker is not installed on this machine** (`docker: command not found`, not on PATH, no service).
+Nothing DB-backed can be executed or verified: migrations have never been run, the seed has never
+been applied, and Testcontainers integration tests cannot run. All SQL above is **authored but
+unexecuted** — treat it as unverified until a Postgres exists.
+
+## NEXT UP
+1. User installs Docker Desktop → `npm run db:up && npm run db:migrate && npm run db:seed`.
+2. Then the identity module as the first vertical slice: entities → repository → service →
+   controller → DTOs, with Testcontainers integration tests exercising the RLS policies
+   (especially every tier x visibility x status combination of `can_view_listing`).
+3. `apps/web` still renders the OLD US placeholder neighborhoods (washington-park etc.) from
+   `src/config/neighborhoods.ts`. It is not yet wired to the API — that happens after the
+   identity + catalog slices land.
+
+---
+
 ## 2026-08-29 — Step 8: Nx monorepo restructure + domain package
 
 **Answers locked this step:**
