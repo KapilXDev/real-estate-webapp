@@ -1,26 +1,94 @@
 @import "tailwindcss";
 
+/**
+ * Design tokens.
+ *
+ * Direction: warm editorial. Real estate buyers respond to warmth and calm, not the saturated
+ * blue "tech startup" palette — and the portals all look like the latter, so this also reads as
+ * distinctly not-Zillow. Deep forest green carries the trust/property association; the sand and
+ * clay neutrals keep photography (the actual hero of any listing page) from competing with UI.
+ */
+@theme {
+  /* Brand — deep forest green. Primary actions, links, active states. */
+  --color-brand-50: #f2f7f4;
+  --color-brand-100: #dfeae3;
+  --color-brand-200: #c0d6c9;
+  --color-brand-300: #94b9a5;
+  --color-brand-400: #66977e;
+  --color-brand-500: #467a61;
+  --color-brand-600: #33614c;
+  --color-brand-700: #2a4e3e;
+  --color-brand-800: #243f33;
+  --color-brand-900: #1f342b;
+  --color-brand-950: #0f1d18;
+
+  /* Warm neutrals — page surfaces, borders, body copy. */
+  --color-sand-50: #faf9f7;
+  --color-sand-100: #f4f2ee;
+  --color-sand-200: #e8e4dc;
+  --color-sand-300: #d6d0c4;
+  --color-sand-400: #b5ab99;
+  --color-sand-500: #978b76;
+  --color-sand-600: #7b7060;
+  --color-sand-700: #655c4f;
+  --color-sand-800: #544d43;
+  --color-sand-900: #48423a;
+  --color-sand-950: #26221d;
+
+  /* Accent — terracotta. Reserved for price emphasis and "new"/urgency badges. */
+  --color-clay-100: #fbeee7;
+  --color-clay-300: #eeb99e;
+  --color-clay-500: #c86f43;
+  --color-clay-600: #b25733;
+  --color-clay-700: #93452a;
+
+  /* Listing status colors. Consistent everywhere a status is shown. */
+  --color-status-active: #2f7d5c;
+  --color-status-pending: #b8811f;
+  --color-status-contract: #8a6d1f;
+  --color-status-closed: #6b6259;
+  --color-status-coming: #3f6ea8;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+
+  /* Slightly tighter than Tailwind's defaults — editorial rather than airy-corporate. */
+  --radius-card: 0.75rem;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: var(--color-sand-50);
+  --foreground: var(--color-sand-950);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  /* Property photography benefits from crisper text alongside it. */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Headings default to the display serif — the main carrier of the editorial feel. */
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+}
+
+/* Respect users who ask for less motion. Map interactions especially. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Visible focus ring for keyboard users — required for accessible search filters. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-brand-600);
+    outline-offset: 2px;
+  }
 }
