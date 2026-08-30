@@ -36,6 +36,16 @@ import type {
  * prefix. If a client component ever needs listings it must go through a route handler, not
  * through this class; importing it into the browser bundle would leak the internal API origin.
  */
+/**
+ * Cache tag for every listing read.
+ *
+ * One tag rather than per-listing tags: the agent's inventory is small, and a publish changes the
+ * search page, the locality pages, the city hubs and the own-listings page all at once. Granular
+ * tags would mean the admin has to know which pages a given listing appears on, which is exactly
+ * the coupling the provider seam exists to prevent.
+ */
+export const LISTINGS_TAG = "listings";
+
 export class ApiProvider implements ListingProvider {
   readonly name = "ApiProvider (NestJS catalog)";
   readonly isLiveData = true;
@@ -66,7 +76,21 @@ export class ApiProvider implements ListingProvider {
     try {
       response = await fetch(url, {
         headers: { accept: "application/json" },
-        next: { revalidate: init?.revalidate ?? this.revalidateSeconds },
+        next: {
+          revalidate: init?.revalidate ?? this.revalidateSeconds,
+          /*
+           * ⚠️ TAGGED SO THE ADMIN CAN PUSH CHANGES THROUGH IMMEDIATELY.
+           *
+           * Time-based revalidation alone means an agent publishes a listing, looks at the site,
+           * and does not see it for up to a minute. They reasonably conclude the save failed —
+           * and re-save, or worse, give up. Reported exactly that way.
+           *
+           * The admin calls `/api/revalidate` after any write, which busts this tag. The time
+           * window stays as a backstop for changes that happen outside the admin (a partner's
+           * inventory, a direct API write).
+           */
+          tags: [LISTINGS_TAG],
+        },
       });
     } catch (error) {
       /*

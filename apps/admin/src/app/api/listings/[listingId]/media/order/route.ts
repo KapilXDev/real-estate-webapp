@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { apiFetch } from "@/lib/api";
+import { revalidateSite } from "@/lib/revalidate-site";
 
 export async function PUT(
   request: Request,
@@ -15,5 +16,6 @@ export async function PUT(
   });
 
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+  await revalidateSite();
   return new NextResponse(null, { status: 204 });
 }

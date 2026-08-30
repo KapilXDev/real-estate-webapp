@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { Area, parsePriceInput, type AreaUnit } from "@tricity/domain";
 
 import { apiFetch } from "@/lib/api";
+import { revalidateSite } from "@/lib/revalidate-site";
 
 /**
  * Server Actions for listing create/edit.
@@ -179,6 +180,9 @@ export async function createListing(
   if (!result.ok) return interpretError(result.status, result.error);
 
   revalidatePath("/listings");
+  // Push the change to the public site now rather than leaving the agent to wonder for a minute
+  // whether the save worked. See revalidate-site.ts — deliberately non-fatal.
+  await revalidateSite();
   // Straight to the photos step: a listing with no pictures is the most common reason an agent's
   // inventory underperforms, so the flow should not end at "saved".
   redirect(`/listings/${result.data!.id}?created=1`);
@@ -220,5 +224,6 @@ export async function updateListing(
 
   revalidatePath("/listings");
   revalidatePath(`/listings/${listingId}`);
+  await revalidateSite();
   return {};
 }

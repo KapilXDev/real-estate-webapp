@@ -86,6 +86,24 @@ export class MediaDeliveryController {
     // otherwise on a response the API serves from user-supplied input.
     response.setHeader("X-Content-Type-Options", "nosniff");
 
+    /*
+     * ⚠️⚠️ WITHOUT THIS, EVERY LISTING PHOTO IS BLANK IN A BROWSER — AND FINE IN curl.
+     *
+     * `helmet()` sets `Cross-Origin-Resource-Policy: same-origin` globally, which tells the
+     * browser to refuse to EMBED this response in a document from another origin. The public site
+     * runs on a different origin from the API (:3000 vs :3001 in dev, and separate hosts in
+     * production), so every `<img>` was being blocked at render time.
+     *
+     * It is invisible to any command-line check: curl, fetch-in-node and the API's own tests all
+     * return 200 with correct bytes, because CORP is enforced by the browser, not the server. It
+     * was verified "working" three separate ways before someone actually looked at the page.
+     *
+     * Public listing photos are meant to be embedded on other origins — that is the entire point
+     * of a media URL — so this route opts out. Nothing else does, and the staff route below stays
+     * same-origin because those images are session-scoped and are only ever shown by the admin.
+     */
+    response.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+
     result.body.pipe(response);
   }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { apiFetch } from "@/lib/api";
+import { revalidateSite } from "@/lib/revalidate-site";
 
 /**
  * Forward a photo upload to the API with the session's access token attached.
@@ -30,5 +31,7 @@ export async function POST(
     // is 25MB", "upload a JPEG, PNG, WebP or HEIC") and are the whole point of the validation.
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
+  // A new photo changes every card that listing appears on.
+  await revalidateSite();
   return NextResponse.json(result.data, { status: 201 });
 }
