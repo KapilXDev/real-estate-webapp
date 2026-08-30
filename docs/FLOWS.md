@@ -151,9 +151,14 @@ DELETE /api/staff/listings/:id/media/:id    ✅
 cannot read another's inventory, leads or photos — enforced by the database and covered by 158
 tests.
 
-❌ **There is no admin UI.** All of the above is API-only, exercised with curl or a REST client.
-Photo upload included. **This is now the only thing standing between the backend and a usable
-product** — a separate `apps/admin` Next app is planned and approved.
+✅ **`apps/admin` (port 3002) is the agent's tool.** Sign in, inventory list with a "no photos"
+nudge, listing create/edit, photo upload + reorder + hero, the enquiry queue with click-to-
+WhatsApp, and RERA registration management.
+
+Sessions are httpOnly cookies — the browser never holds a JWT and never learns the API origin.
+⚠️ Token refresh happens in `proxy.ts`, NOT in the API client: refresh tokens rotate, a Server
+Component render cannot write cookies, and refreshing there consumed the old token while throwing
+the replacement away — which the API correctly reads as theft and revokes the whole family.
 
 ---
 
@@ -197,7 +202,7 @@ Login is the exception: it cannot know your org before it finds you, so it goes 
 
 **Blocking a real launch:**
 
-1. ❌ **Admin UI** — inventory and leads are API-only today.
+1. ✅ **Admin UI — BUILT.** `apps/admin`, a separate Next app for staff.
 2. ✅ **Media upload — BUILT.** Multipart upload → sharp resize into thumb/card/hero WebP →
    MinIO → served through an RLS-checked proxy. EXIF rotation applied, SVG rejected, decompression
    bombs rejected, duplicates deduped by checksum.

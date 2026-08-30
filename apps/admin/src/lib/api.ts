@@ -88,6 +88,25 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   return { ok: true, status: response.status, data: (await response.json()) as T };
 }
 
+/**
+ * Raw response, for anything that is not JSON.
+ *
+ * Photo bytes are the only current caller. `apiFetch` calls `.json()` on the body, which would
+ * throw on a WebP — and buffering the image into a JS string only to re-emit it would be wasteful
+ * even if it worked. This returns the untouched `Response` so the body can be streamed straight
+ * through.
+ */
+export async function apiFetchRaw(path: string, init: RequestInit = {}): Promise<Response> {
+  const { accessToken } = await readSession();
+  if (!accessToken) redirect("/login");
+
+  return fetch(`${apiBaseUrl()}${path}`, {
+    ...init,
+    headers: { ...init.headers, authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+}
+
 /** Convenience for reads that should render an empty state rather than crash the page. */
 export async function apiGet<T>(path: string): Promise<T | null> {
   const result = await apiFetch<T>(path);
