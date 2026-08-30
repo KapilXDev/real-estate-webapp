@@ -117,6 +117,64 @@ test("publishing without a registration is refused with a way forward, and a dra
   await expect(page.getByText(/^(pending review|draft)$/)).toBeVisible();
 });
 
+/**
+ * ⚠️⚠️ KNOWN BUG, RECORDED AS AN EXPECTED FAILURE — REMOVE `test.fail()` WHEN IT IS FIXED.
+ *
+ * React 19 RESETS an uncontrolled form after a Server Action completes, and the action completes
+ * whether it succeeded or was refused. So a RERA refusal empties every field the agent typed:
+ * title, description, address, plot number, area, bedrooms, year built — everything except price,
+ * which survives only because it happens to be controlled by `useState` for the price echo.
+ *
+ * The consequence is bad in proportion to who it hits. The gate fires on agents who are trying to
+ * comply and have simply not registered in that jurisdiction yet, and it fires AFTER they have
+ * filled in a long form. Being told "add your registration, or save as a draft" and then finding
+ * the form blank is how someone decides the tool is not worth using and goes back to WhatsApp.
+ *
+ * Fixing it means echoing the submitted values back through `ListingFormState` and re-seeding the
+ * fields from them — several ways to do that, hence a decision rather than a drive-by fix here.
+ */
+test("a refused publish keeps what the agent typed", async ({ page }) => {
+  /* ⚠️ Called INSIDE the test body on purpose: at file scope, `test.fail()` would mark every
+   * test in this file as expected-to-fail, which would hide three real assertions. */
+  test.fail(
+    true,
+    "React 19 resets the form after a Server Action, so a RERA refusal wipes what was typed",
+  );
+
+  const title = uniqueTitle("retention");
+
+  await page.goto(`${ADMIN_URL}/listings/new`);
+  await fillNewListing(page, {
+    city: "Mohali",
+    locality: "Phase 7",
+    title,
+    price: "1.4 crore",
+    areaValue: "9",
+    areaUnit: "marla",
+    status: "Published",
+    description: "Corner plot, park facing, south entry.",
+  });
+
+  await expect(page.locator("form").getByRole("alert").first()).toContainText(
+    "Cannot publish a listing in Punjab",
+  );
+
+  /* Short timeout: this assertion is expected to fail until the bug is fixed, and the default 15s
+   * would spend half the suite's runtime waiting for a known answer. */
+  await expect(listingField(page, "title")).toHaveValue(title, { timeout: 2_000 });
+  await expect(listingField(page, "description")).toHaveValue(
+    "Corner plot, park facing, south entry.",
+    { timeout: 2_000 },
+  );
+  await expect(listingField(page, "areaValue")).toHaveValue("9", { timeout: 2_000 });
+});
+
+/*
+ * ⚠️ ORDER MATTERS, AND THIS TEST MUST STAY ABOVE THE ONE THAT REGISTERS PUNJAB. The file is
+ * serial, so declaration order is execution order — and once a Punjab registration exists the gate
+ * no longer fires, publication succeeds, and this test sits waiting fifteen seconds for an error
+ * banner that is never coming. It still reports as an expected failure, so the mistake is silent.
+ */
 test("registering the jurisdiction unblocks publishing", async ({ page }) => {
   const title = uniqueTitle("gate then publish");
 
@@ -161,53 +219,4 @@ test("registering the jurisdiction unblocks publishing", async ({ page }) => {
   await expect(page.locator("form").getByRole("alert")).toHaveCount(0);
   await page.reload();
   await expect(page.getByText("active", { exact: true })).toBeVisible();
-});
-
-/**
- * ⚠️⚠️ KNOWN BUG, RECORDED AS AN EXPECTED FAILURE — REMOVE `test.fail()` WHEN IT IS FIXED.
- *
- * React 19 RESETS an uncontrolled form after a Server Action completes, and the action completes
- * whether it succeeded or was refused. So a RERA refusal empties every field the agent typed:
- * title, description, address, plot number, area, bedrooms, year built — everything except price,
- * which survives only because it happens to be controlled by `useState` for the price echo.
- *
- * The consequence is bad in proportion to who it hits. The gate fires on agents who are trying to
- * comply and have simply not registered in that jurisdiction yet, and it fires AFTER they have
- * filled in a long form. Being told "add your registration, or save as a draft" and then finding
- * the form blank is how someone decides the tool is not worth using and goes back to WhatsApp.
- *
- * Fixing it means echoing the submitted values back through `ListingFormState` and re-seeding the
- * fields from them — several ways to do that, hence a decision rather than a drive-by fix here.
- */
-test("a refused publish keeps what the agent typed", async ({ page }) => {
-  /* ⚠️ Called INSIDE the test body on purpose: at file scope, `test.fail()` would mark every
-   * test in this file as expected-to-fail, which would hide three real assertions. */
-  test.fail(
-    true,
-    "React 19 resets the form after a Server Action, so a RERA refusal wipes what was typed",
-  );
-
-  const title = uniqueTitle("retention");
-
-  await page.goto(`${ADMIN_URL}/listings/new`);
-  await fillNewListing(page, {
-    city: "Mohali",
-    locality: "Phase 7",
-    title,
-    price: "1.4 crore",
-    areaValue: "9",
-    areaUnit: "marla",
-    status: "Published",
-    description: "Corner plot, park facing, south entry.",
-  });
-
-  await expect(page.locator("form").getByRole("alert").first()).toContainText(
-    "Cannot publish a listing in Punjab",
-  );
-
-  await expect(listingField(page, "title")).toHaveValue(title);
-  await expect(listingField(page, "description")).toHaveValue(
-    "Corner plot, park facing, south entry.",
-  );
-  await expect(listingField(page, "areaValue")).toHaveValue("9");
 });

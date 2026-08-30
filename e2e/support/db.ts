@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import postgres from "postgres";
 
 import { E2E_ORG, ownerDatabaseUrl, repoRoot } from "./env";
@@ -233,6 +234,38 @@ export async function deleteMarkedReraRegistrations(): Promise<number> {
        RETURNING id
     `;
     return rows.length;
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
+ * Age a refresh token's rotation timestamp, so a replay lands OUTSIDE the grace window.
+ *
+ * ⚠️ The alternative was `await new Promise(r => setTimeout(r, 11_000))` in a suite that
+ * otherwise runs in thirty seconds — and a sleep long enough to be correct today silently stops
+ * being long enough the moment someone raises `REFRESH_ROTATION_GRACE_SECONDS`. Backdating tests
+ * the same branch deterministically and instantly.
+ *
+ * Matched on the SHA-256 of the raw token, because the raw value is deliberately never stored.
+ */
+export async function ageRefreshTokenUse(rawToken: string, seconds: number): Promise<void> {
+  const hash = createHash("sha256").update(rawToken).digest("hex");
+  const sql = connect();
+  try {
+    const rows = await sql`
+      UPDATE refresh_token
+         SET used_at = used_at - make_interval(secs => ${seconds})
+       WHERE token_hash = ${hash}
+         AND used_at IS NOT NULL
+      RETURNING id
+    `;
+    if (rows.length !== 1) {
+      throw new Error(
+        `Expected exactly one used refresh_token row to age, found ${rows.length}. ` +
+          "The token was probably never rotated.",
+      );
+    }
   } finally {
     await sql.end();
   }

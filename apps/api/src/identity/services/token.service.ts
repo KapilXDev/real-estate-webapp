@@ -192,6 +192,37 @@ export class TokenService {
    * and the real user simply logs in again. That is the correct trade: a rare, recoverable
    * inconvenience in exchange for shutting down a live session hijack. This is the OAuth 2.1
    * recommendation.
+   *
+   * ⚠️⚠️ …EXCEPT THAT STRICT ROTATION, ON ITS OWN, SIGNS LEGITIMATE USERS OUT CONSTANTLY, AND
+   * THAT IS WHAT THE GRACE WINDOW BELOW IS FOR.
+   *
+   * A browser holds ONE cookie jar and several tabs. When the access cookie expires, every tab
+   * that touches the server sends a request carrying the SAME refresh token, because none of them
+   * has seen the response that replaces it yet. The second request is indistinguishable from a
+   * replay, so strict rotation burns the family and signs the user out everywhere.
+   *
+   * This was not theoretical. Measured with a browser, before the fix:
+   *
+   *     N=2  1 of 2 requests bounced to the login page, session dead afterwards
+   *     N=3  2 of 3 bounced,                            session dead
+   *     N=6  5 of 6 bounced,                            session dead
+   *
+   * Two tabs and thirteen minutes of idling were enough. Note that a BFF-side fix — collapsing
+   * concurrent refreshes in `apps/admin/src/proxy.ts` — cannot solve this: it only helps requests
+   * that overlap the exchange, it does nothing for the consumer auth path, and the Next docs are
+   * explicit that proxy may run where module memory is not shared. The lifecycle belongs to
+   * whoever owns the tokens, so the fix lives here.
+   *
+   * Inside the window, a straggler is served a fresh token in the same family. Outside it,
+   * behaviour is exactly as before. Same mechanism Auth0 calls a "reuse interval" and Okta a
+   * "rotation grace period". `REFRESH_ROTATION_GRACE_SECONDS` documents the security trade.
+   *
+   * ⚠️ THE ROW IS LOCKED WITH `FOR UPDATE`, WHICH IS WHAT MAKES THIS DETERMINISTIC. Concurrent
+   * rotations of the same token now queue instead of racing: the second transaction blocks, and
+   * when it proceeds it reads a `used_at` the first just committed — freshly inside the window,
+   * so it is graced. The previous code instead let both run, guarded the UPDATE with
+   * `used_at IS NULL`, and treated the loser as theft. That is the same false positive again,
+   * arrived at from the other direction, and it is why there is no longer a lost-race branch.
    */
   async rotate(params: {
     raw: string;
@@ -204,17 +235,13 @@ export class TokenService {
       throw new Error("Unknown refresh token");
     }
 
-    if (record.used_at !== null) {
-      // Already used. Assume theft and burn the family down.
-      const revoked = await this.revokeFamily(record.family_id);
-      this.logger.warn(
-        `Refresh token reuse detected for ${record.principal_kind} ` +
-          `${record.user_id ?? record.contact_id}; ` +
-          `revoked ${revoked} token(s) in family ${record.family_id}`,
-      );
-      throw new TokenReuseDetectedError(record.family_id);
-    }
-
+    /*
+     * ⚠️ Checked BEFORE `used_at`, and the order matters. `auth_revoke_token_family` stamps
+     * `revoked_at` on every unrevoked row in the family, used ones included — so a token whose
+     * family was already burned by a genuine reuse arrives here with BOTH columns set. Testing
+     * `used_at` first would put it on the grace path and hand a session back to the attacker the
+     * revocation was protecting against.
+     */
     if (record.revoked_at !== null) {
       throw new Error("Refresh token revoked");
     }
@@ -223,35 +250,56 @@ export class TokenService {
       throw new Error("Refresh token expired");
     }
 
-    /*
-     * Mark used and mint the successor in ONE transaction. If these were separate, a crash
-     * between them would either leave the old token replayable or leave the user with no valid
-     * token at all.
-     *
-     * The UPDATE is guarded with `used_at IS NULL` so two concurrent refreshes cannot both
-     * succeed — the loser sees zero affected rows and is treated as reuse, which is the correct
-     * reading of two clients presenting the same token at once.
-     */
+    const graceMs = this.config.REFRESH_ROTATION_GRACE_SECONDS * 1000;
     const raw = this.generateRawToken();
     const tokenHash = this.hashToken(raw);
     const expiresAt = new Date(
       Date.now() + this.config.JWT_REFRESH_TTL_DAYS * 24 * 60 * 60 * 1000,
     );
 
-    const claimed = await this.database.withoutTenantForAuth(async (tx) => {
-      const updated = await tx`
-        UPDATE refresh_token
-           SET used_at = now()
+    /*
+     * Lock, decide, and mint the successor in ONE transaction. Split across statements, a crash
+     * in between would either leave the old token replayable or leave the user with no valid
+     * token at all.
+     */
+    const outcome = await this.database.withoutTenantForAuth(async (tx) => {
+      const [locked] = await tx<{ used_at: Date | null; revoked_at: Date | null }[]>`
+        SELECT used_at, revoked_at
+          FROM refresh_token
          WHERE id = ${record.id}
-           AND used_at IS NULL
-           AND revoked_at IS NULL
-        RETURNING id
+           FOR UPDATE
       `;
 
-      if (updated.length === 0) return false;
+      // Re-read under the lock rather than trusting the pre-lock snapshot: the transaction that
+      // held this row may have been a `revokeFamily` that finished while we were waiting.
+      if (!locked || locked.revoked_at !== null) return "revoked" as const;
 
-      // The successor inherits the principal of the token it replaces — never re-derived, so a
-      // rotation can never move a session from one principal to another.
+      if (locked.used_at !== null && Date.now() - locked.used_at.getTime() > graceMs) {
+        return "reused" as const;
+      }
+
+      const graced = locked.used_at !== null;
+
+      /*
+       * `coalesce` keeps the ORIGINAL rotation timestamp on the grace path. Refreshing it would
+       * let a stream of requests walk the window forward indefinitely, turning a bounded few
+       * seconds into an unbounded lifetime for a token that has already been spent.
+       */
+      await tx`
+        UPDATE refresh_token
+           SET used_at = coalesce(used_at, now())
+         WHERE id = ${record.id}
+      `;
+
+      /*
+       * The successor inherits the principal of the token it replaces — never re-derived, so a
+       * rotation can never move a session from one principal to another.
+       *
+       * A graced straggler gets a NEW token rather than a copy of the winner's: only the hash of
+       * that one is stored, deliberately, so it cannot be handed out again. The cost is a couple
+       * of extra live members in one family during a burst, all belonging to the same real
+       * session; the browser keeps whichever response lands last and the rest are never presented.
+       */
       await tx`
         INSERT INTO refresh_token
           (user_id, contact_id, family_id, token_hash, expires_at, user_agent, ip)
@@ -266,17 +314,35 @@ export class TokenService {
         )
       `;
 
-      return true;
+      return graced ? ("graced" as const) : ("rotated" as const);
     });
 
-    if (!claimed) {
+    if (outcome === "revoked") {
+      throw new Error("Refresh token revoked");
+    }
+
+    if (outcome === "reused") {
       const revoked = await this.revokeFamily(record.family_id);
       this.logger.warn(
-        `Concurrent refresh lost the race for ${record.principal_kind} ` +
+        `Refresh token reuse detected for ${record.principal_kind} ` +
           `${record.user_id ?? record.contact_id}; ` +
           `revoked ${revoked} token(s) in family ${record.family_id}`,
       );
       throw new TokenReuseDetectedError(record.family_id);
+    }
+
+    if (outcome === "graced") {
+      /*
+       * Logged at debug, not warn. This is the expected shape of a multi-tab client and will
+       * happen routinely; at warn it would train everyone to ignore the line that also reports
+       * real theft. A sustained flood of these on one family is still worth alerting on, and the
+       * family id is here for exactly that.
+       */
+      this.logger.debug(
+        `Refresh token presented again inside the ${this.config.REFRESH_ROTATION_GRACE_SECONDS}s ` +
+          `rotation grace window for ${record.principal_kind} ` +
+          `${record.user_id ?? record.contact_id}; family ${record.family_id}`,
+      );
     }
 
     return { record, refreshToken: raw };

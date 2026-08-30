@@ -24,6 +24,9 @@ land in Postgres, and the agent runs the whole thing from `apps/admin`. 170 inte
 - **Admin token refresh belongs in `proxy.ts`, never in the API client.** Step 17.
 - **`@Throttle` only replaces the named limiters it lists.** There are two — `short` (10/sec) and
   `default` — and overriding one leaves the other in force. Step 21.
+- **Refresh rotation has a grace window** (`REFRESH_ROTATION_GRACE_SECONDS`, default 10) because
+  strict rotation signed out anyone with two tabs. `revoked_at` is checked before `used_at`, and
+  the row is locked `FOR UPDATE`. Step 22.
 - **A parameter used only in `$n IS NOT NULL` has no inferable type** and fails the whole statement
   at parse time with 42P18. Cast it. Step 21.
 - Dev staff login: `owner@tricityestate.test` / `dev-owner-password-123`. Org `tricity-estate` is
@@ -32,19 +35,16 @@ land in Postgres, and the agent runs the whole thing from `apps/admin`. 170 inte
 - A second dev organisation, `e2e-gate-firm`, exists purely so the browser suite can exercise the
   RERA gate against an empty compliance record. Not `is_host`; invisible on the site.
 
-**🔴 TWO KNOWN BUGS ARE RECORDED AS `test.fail()` IN THE BROWSER SUITE. Both need a decision:**
-
-1. **Two concurrent requests after access-token expiry revoke the whole refresh family** and sign
-   the agent out everywhere. Measured: at N=2, one request is bounced and the session is dead
-   afterwards. `session-refresh.spec.ts` has the numbers. The fix is a rotation grace interval —
-   in `proxy.ts` (cache old→new briefly) or, more correctly, in the API beside reuse detection.
-2. **React 19 resets the listing form after a Server Action**, so a RERA refusal wipes everything
-   the agent typed except the price. `rera-gate.spec.ts`. Needs the submitted values echoed back
-   through `ListingFormState`.
+**🔴 ONE KNOWN BUG IS RECORDED AS `test.fail()` IN THE BROWSER SUITE:** React 19 resets the
+listing form after a Server Action, so a RERA refusal wipes everything the agent typed except the
+price (which survives only because it is controlled for the price echo). See `rera-gate.spec.ts`.
+The fix is to echo the submitted values back through `ListingFormState` and re-seed the fields.
+⚠️ That test must stay ABOVE the one that registers Punjab — the file is serial and the gate stops
+firing once a registration exists.
 
 **Next, in rough priority:**
 
-1. **Fix the two bugs above.** The refresh one is a live sign-out bug for anyone with two tabs.
+1. **Fix the form-reset bug above.**
 2. **Speed-to-lead auto-WhatsApp** — the highest-ROI feature left, and the reason `phone` is
    weighted so heavily in lead scoring. Needs a WhatsApp Business API account and opt-in language.
    TODO marker is in `leads/services/lead.service.ts`; it must NOT block the lead response.
@@ -81,6 +81,108 @@ npm run test:e2e                       # 22 browser tests, ~35s, needs all three
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-30 — Step 22: A rotation grace window, so two tabs stop killing the session
+
+Fixes the bug step 21 measured and left as a `test.fail()`.
+
+## What was wrong
+
+Refresh tokens rotate, and a token presented twice is treated as theft: the whole family is
+revoked. That is the OAuth 2.1 recommendation and it is right. What it misses is that **a browser
+has one cookie jar and several tabs.** When the access cookie expires, every tab that touches the
+server sends a request carrying the same refresh token — none of them has yet seen the response
+that replaces it. The second request is byte-for-byte indistinguishable from a replay.
+
+Measured with a real browser:
+
+```
+N=2   1 of 2 requests bounced to /login, session DEAD afterwards
+N=3   2 of 3 bounced,                    session DEAD
+N=6   5 of 6 bounced,                    session DEAD
+```
+
+Two tabs and thirteen minutes of idling. And the request that fails is not the one that caused it,
+which is why this class of bug never gets diagnosed from a bug report.
+
+There was a second, closely related instance of the same false positive already in the code. The
+old `rotate()` guarded its UPDATE with `used_at IS NULL` and treated the loser of a genuine race as
+theft — "two clients presenting the same token at once" was read as an attack, when in a
+multi-tab browser it is the normal case.
+
+## Why the fix went in the API, not in `proxy.ts`
+
+The tempting fix is at the BFF: have `proxy.ts` cache old→new for a few seconds so a straggler
+gets the replacement. It was rejected for three reasons, each sufficient on its own.
+
+- It only helps requests that reach that one process. The Next docs are explicit that proxy may run
+  where module memory is not shared, which is the same weakness the existing single-flight already
+  carries and documents.
+- It does nothing for consumer sessions. Contacts refresh through the same `TokenService` from a
+  different client entirely; a buyer with two tabs has exactly this bug and no proxy in front.
+- Token lifecycle belongs to whoever owns the tokens. A workaround in one client leaves the API
+  still wrong.
+
+## The fix
+
+`REFRESH_ROTATION_GRACE_SECONDS`, default 10, capped at 60 by the config schema. Within the window
+a token that has already been rotated is served instead of being treated as an attack; outside it,
+behaviour is exactly as before. This is the mechanism Auth0 calls a "reuse interval" and Okta a
+"rotation grace period" — Auth0 defaults to 3s; 10s is chosen for a market on patchy mobile
+connections where an in-flight request can take seconds to land.
+
+**The row is now taken `FOR UPDATE`,** which is what makes it deterministic rather than
+probabilistic. Concurrent rotations of the same token queue instead of racing: the second
+transaction blocks, and when it proceeds it reads a `used_at` the first just committed — freshly
+inside the window, so it is graced. There is no longer a lost-race branch at all.
+
+**`revoked_at` is checked BEFORE `used_at`, and the order is load-bearing.**
+`auth_revoke_token_family` stamps `revoked_at` on every unrevoked row in the family, used ones
+included, so a token whose family was burned by a genuine reuse arrives with both columns set.
+Testing `used_at` first would route it onto the grace path and hand a session back to the very
+attacker the revocation existed to stop.
+
+**`used_at` is set with `coalesce`, never refreshed.** Otherwise a stream of requests would walk
+the window forward indefinitely, turning ten seconds into an unbounded lifetime for a token that
+has already been spent.
+
+A graced straggler gets a NEW token rather than a copy of the winner's, because only the hash of
+that one is stored — deliberately — so it cannot be handed out again. The cost is a couple of extra
+live members in one family during a burst, all belonging to the same real session; the browser
+keeps whichever response lands last and the others are never presented. Grace is logged at debug,
+not warn: it is the expected shape of a multi-tab client, and at warn it would train everyone to
+ignore the line that also reports real theft.
+
+## The security trade, stated plainly
+
+Inside the window, a stolen refresh token replayed gets a session without tripping detection. That
+is a real cost. It is bounded to seconds, and weighed against an attacker who by that point already
+holds an httpOnly cookie — and against the alternative, which is users being signed out often
+enough that the pressure becomes "make the tokens last longer" or "stop rotating", both strictly
+worse postures. `0` disables the window for anyone who disagrees.
+
+## Two tests exist so this cannot become "reuse detection is off"
+
+Without them the fix is indistinguishable from having simply deleted the security control, and
+silently so:
+
+- **a token replayed after the window still burns the family** — and the family, not just that
+  token, because revoking one branch leaves the thief holding another.
+- **a signed-out session is not resurrected** — the `revoked_at`-before-`used_at` ordering above.
+
+The first ages `used_at` with SQL rather than sleeping through the window. An
+`await setTimeout(11_000)` in a suite that runs in twenty seconds is bad enough; worse, a sleep
+long enough to be correct today silently stops being correct the moment someone raises the setting.
+
+## Also fixed here
+
+The expected-failure test for the React 19 form reset was sitting AFTER the test that registers
+Punjab for the gate organisation. The file is serial, so by the time it ran the gate no longer
+fired, and it was spending fifteen seconds waiting for an error banner that was never coming —
+still reporting as an expected failure, so the mistake was invisible. Moved above, and given a 2s
+timeout. Suite is down from 32s to 19s.
 
 ---
 

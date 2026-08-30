@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-import { ADMIN_URL, STAFF } from "../support/env";
+import { ageRefreshTokenUse } from "../support/db";
+import { ADMIN_URL, API_URL, STAFF } from "../support/env";
 
 /**
  * Silent token refresh, and the rotation bug it was built to avoid.
@@ -31,6 +32,27 @@ import { ADMIN_URL, STAFF } from "../support/env";
 
 const ACCESS_COOKIE = "tricity_access";
 const REFRESH_COOKIE = "tricity_refresh";
+
+/** Mirrors `REFRESH_ROTATION_GRACE_SECONDS` in the API config. */
+const GRACE_SECONDS = Number(process.env.REFRESH_ROTATION_GRACE_SECONDS ?? 10);
+
+/**
+ * Sign in against the API directly, for the tests that reason about token lifecycle rather than
+ * about pages.
+ *
+ * ⚠️ EVERY LOGIN IN THIS SUITE COMES OUT OF ONE BUDGET: staff login is throttled to 10 per minute
+ * per IP, and on a dev machine the whole run is one IP. The count today is eight — two saved
+ * sessions in `auth.setup.ts`, three here for the tests that need an isolated token family, one
+ * for the post-login redirect test, and two below. Adding a ninth and tenth is fine; an eleventh
+ * will start failing a later test with something that looks nothing like a rate limit.
+ */
+async function login(request: import("@playwright/test").APIRequestContext) {
+  const response = await request.post(`${API_URL}/auth/staff/login`, {
+    data: { email: STAFF.email, password: STAFF.password },
+  });
+  expect(response.ok(), `staff login failed with ${response.status()}`).toBeTruthy();
+  return (await response.json()) as { accessToken: string; refreshToken: string };
+}
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -125,38 +147,24 @@ test("concurrent requests after expiry do not revoke the session", async ({ page
   await signIn(page);
 
   /*
-   * ⚠️⚠️ KNOWN BUG — REMOVE `test.fail()` WHEN IT IS FIXED. MEASURED, NOT SUSPECTED:
+   * ⚠️ THE RACE THAT FOUND THE BUG ON ITS FIRST RUN: eight parallel requests all returned 200,
+   * and then the very next request 500'd with a dead session. Every individual response looked
+   * fine, which is why the assertion that matters is the one AFTER the storm, not the storm
+   * itself.
+   *
+   * ⚠️ THIS FAILED UNTIL THE ROTATION GRACE WINDOW EXISTED, AND IT FAILED AT N=2. Measured:
    *
    *     N=2  1 of 2 requests bounced to /login, session DEAD afterwards
    *     N=3  2 of 3 bounced,                    session DEAD
    *     N=6  5 of 6 bounced,                    session DEAD
    *
-   * TWO concurrent requests are enough. The single-flight in `proxy.ts` only collapses requests
-   * that arrive while an exchange is still running; a straggler that arrives just after it
-   * completes still carries the OLD refresh cookie, because the browser has not yet seen the
-   * response that replaces it. The API sees a token it has already rotated, correctly treats it
-   * as theft, and revokes the whole family — signing the agent out everywhere.
+   * Two tabs and thirteen minutes of idling. The single-flight in `proxy.ts` only collapses
+   * requests that overlap an exchange; a straggler arriving just after one completes still
+   * carries the old cookie, because the browser has not yet seen the response replacing it. The
+   * real fix is `REFRESH_ROTATION_GRACE_SECONDS` in the API — see `TokenService.rotate`.
    *
-   * In practice: an agent with two tabs open, idle past the 13-minute access-cookie lifetime, is
-   * logged out of both the next time anything touches the server. That is the same class of bug
-   * step 17 fixed, arrived at from a different direction.
-   *
-   * The usual remedy is a rotation grace interval: for a few seconds after rotating, a
-   * presentation of the old token returns the SAME replacement instead of revoking. Auth0 and
-   * Okta both do this. It can live in `proxy.ts` (cache old→new briefly) or in the API next to
-   * reuse detection, which is the more correct home — a design call, so it is reported rather
-   * than patched here.
-   */
-  test.fail(true, "two concurrent requests after access-token expiry revoke the refresh family");
-
-  /*
-   * ⚠️ THE RACE THAT FOUND THE BUG ON ITS FIRST RUN: eight parallel requests all returned 200,
-   * and then the very next request 500'd with a dead session. Every individual response looked
-   * fine, which is why the single-flight in `proxy.ts` is keyed on the refresh token rather than
-   * held in a module-level variable — a single variable would also serialise refreshes across
-   * different users sharing the process, and one could receive the other's tokens.
-   *
-   * The assertion that matters is therefore the one AFTER the storm, not the storm itself.
+   * Six is deliberately more than the two that used to break it: the point is that the window
+   * covers a burst, not just a pair.
    */
   await expireAccessToken(context);
 
@@ -213,4 +221,60 @@ test("a crafted `from` cannot redirect off-site after login", async ({ page, con
   await page.getByRole("button", { name: "Sign in" }).click();
 
   await expect(page).toHaveURL(`${ADMIN_URL}/listings`);
+});
+
+
+/**
+ * ⚠️ THE OTHER HALF OF THE GRACE WINDOW. Without these two, the fix above is indistinguishable
+ * from having simply switched reuse detection off — which would be a far worse bug than the one
+ * it replaced, and a silent one.
+ */
+test("a token replayed after the grace window still burns the family", async ({ request }) => {
+  const first = await login(request);
+
+  const second = await request.post(`${API_URL}/auth/staff/refresh`, {
+    data: { refreshToken: first.refreshToken },
+  });
+  expect(second.ok(), "the ordinary rotation should succeed").toBeTruthy();
+  const rotated = (await second.json()) as { refreshToken: string };
+
+  /* Age the spent token past the window instead of sleeping through it — see `ageRefreshTokenUse`. */
+  await ageRefreshTokenUse(first.refreshToken, GRACE_SECONDS + 60);
+
+  const replay = await request.post(`${API_URL}/auth/staff/refresh`, {
+    data: { refreshToken: first.refreshToken },
+  });
+  expect(replay.status(), "a stale replay must not be graced").toBe(401);
+
+  /*
+   * And the whole family must be gone, not just that one token. Revoking only the replayed token
+   * would leave the thief holding whichever branch of the chain they stole.
+   */
+  const afterBurn = await request.post(`${API_URL}/auth/staff/refresh`, {
+    data: { refreshToken: rotated.refreshToken },
+  });
+  expect(
+    afterBurn.status(),
+    "reuse detection revoked the replayed token but left the family alive",
+  ).toBe(401);
+});
+
+test("a grace window does not resurrect a signed-out session", async ({ request }) => {
+  const session = await login(request);
+
+  const loggedOut = await request.post(`${API_URL}/auth/staff/logout`, {
+    data: { refreshToken: session.refreshToken },
+  });
+  expect(loggedOut.ok()).toBeTruthy();
+
+  /*
+   * ⚠️ Signing out revokes the family, and `auth_revoke_token_family` stamps `revoked_at` on used
+   * rows too — so a logged-out token can arrive with BOTH `used_at` and `revoked_at` set. That is
+   * exactly why `rotate()` checks `revoked_at` FIRST: testing `used_at` first would route it to
+   * the grace path and hand the session straight back.
+   */
+  const afterLogout = await request.post(`${API_URL}/auth/staff/refresh`, {
+    data: { refreshToken: session.refreshToken },
+  });
+  expect(afterLogout.status(), "a signed-out token was accepted").toBe(401);
 });

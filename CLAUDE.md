@@ -232,6 +232,13 @@ Next, in order:
 - **RERA registrations are per (organisation, jurisdiction)** — `organization_rera`, resolved by
   joining on the listing's CITY state. `ListingAdminService` blocks publication without a valid one
   for that jurisdiction; drafts are always allowed. Do not add a bypass flag.
+- **Strict refresh-token rotation signs legitimate users out**, so `TokenService.rotate` has a
+  grace window (`REFRESH_ROTATION_GRACE_SECONDS`, default 10). One browser, several tabs, one
+  cookie jar: when the access cookie expires every tab sends the SAME refresh token, and the
+  second is indistinguishable from a replay. Two tabs were enough to burn the family. The row is
+  taken `FOR UPDATE` so concurrent rotations queue rather than race, and `revoked_at` is checked
+  BEFORE `used_at` — a burned family has both set, and testing `used_at` first would grace the
+  attacker's token. Outside the window, reuse detection is unchanged.
 - **⚠️ `@Throttle` REPLACES ONLY THE NAMED LIMITERS IT LISTS.** `ThrottlerModule.forRoot` declares
   two — `short` (10 per **second**) and `default` (120/min). Overriding `default` alone leaves
   `short` in force, which is how the media route ended up serving ten images and 429-ing the rest
