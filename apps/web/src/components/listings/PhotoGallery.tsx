@@ -1,9 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 
 import type { ListingMedia } from "@/lib/listings/types";
+
+import { ListingImage } from "./ListingImage";
 
 /**
  * Listing photo gallery with a lightbox.
@@ -64,13 +65,12 @@ export function PhotoGallery({ media }: { media: ListingMedia[] }) {
           onClick={() => setLightboxIndex(0)}
           className="relative aspect-[4/3] overflow-hidden rounded-card sm:col-span-2 sm:row-span-2 sm:aspect-auto"
         >
-          <Image
-            src={hero.url}
+          <ListingImage
+            media={hero}
             alt={hero.caption}
-            fill
             sizes="(max-width: 640px) 100vw, 50vw"
             priority
-            className="object-cover transition-transform duration-300 hover:scale-[1.02]"
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 hover:scale-[1.02]"
           />
         </button>
 
@@ -81,12 +81,11 @@ export function PhotoGallery({ media }: { media: ListingMedia[] }) {
             onClick={() => setLightboxIndex(index + 1)}
             className="relative hidden aspect-[4/3] overflow-hidden rounded-card sm:block"
           >
-            <Image
-              src={photo.url}
+            <ListingImage
+              media={photo}
               alt={photo.caption}
-              fill
               sizes="25vw"
-              className="object-cover transition-transform duration-300 hover:scale-[1.02]"
+              className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 hover:scale-[1.02]"
             />
             {/* "+N more" overlay on the final thumbnail when photos are hidden. */}
             {index === thumbnails.length - 1 && media.length > 5 && (
@@ -132,12 +131,12 @@ export function PhotoGallery({ media }: { media: ListingMedia[] }) {
             className="relative flex-1"
             onClick={(e) => e.stopPropagation()}
           >
-            <Image
-              src={media[lightboxIndex].url}
+            <ListingImage
+              media={media[lightboxIndex]}
               alt={media[lightboxIndex].caption}
-              fill
               sizes="100vw"
-              className="object-contain"
+              priority
+              className="absolute inset-0 h-full w-full object-contain"
             />
           </div>
 

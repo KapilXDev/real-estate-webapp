@@ -213,7 +213,11 @@ function toStoredArea(area: ListingDto["plotArea"]): StoredArea | undefined {
  */
 function toMediaUrl(media: ListingDto["media"][number]) {
   const base = (process.env.NEXT_PUBLIC_MEDIA_BASE_URL ?? "").replace(/\/$/, "");
-  return { ...media, url: `${base}${media.url}` };
+  return {
+    ...media,
+    url: `${base}${media.url}`,
+    variants: media.variants?.map((v) => ({ ...v, url: `${base}${v.url}` })),
+  };
 }
 
 export function toListing(dto: ListingDto): Listing {

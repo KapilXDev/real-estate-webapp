@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 
 import { Area } from "@tricity/domain";
@@ -12,6 +11,7 @@ import {
   type StoredArea,
 } from "@/lib/listings/types";
 import { ListingAttribution } from "./ListingAttribution";
+import { ListingImage } from "./ListingImage";
 import { StatusBadge } from "./StatusBadge";
 
 /** Render a stored area using the factor it was written with — "10 marla", "1,200 sq ft". */
@@ -88,20 +88,13 @@ export function ListingCard({
       )}
     >
       <div className="relative aspect-[4/3] overflow-hidden bg-sand-100">
-        {hero ? (
-          <Image
-            src={hero.url}
-            alt={hero.caption}
-            fill
-            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-            priority={priority}
-            className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-sand-500">
-            No photo available
-          </div>
-        )}
+        <ListingImage
+          media={hero}
+          alt={hero?.caption ?? `${listing.address.unparsed}`}
+          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+          priority={priority}
+          className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+        />
 
         <div className="absolute left-3 top-3 flex flex-wrap gap-2">
           <StatusBadge status={listing.status} />

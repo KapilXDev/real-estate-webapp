@@ -91,6 +91,54 @@ export class MediaDeliveryController {
 }
 
 /**
+ * Staff photo delivery.
+ *
+ * ⚠️⚠️ THIS EXISTS BECAUSE THE PUBLIC ROUTE ABOVE CANNOT SERVE A DRAFT'S PHOTOS, EVER.
+ *
+ * `MediaDeliveryController.serve` is `@Public()`, which means the guard skips token verification
+ * entirely — so `request.principal` is never populated and the lookup runs as ANONYMOUS. RLS then
+ * correctly refuses the media of a PENDING_REVIEW or PRIVATE listing, *even when the request
+ * carries a perfectly valid staff token for the organisation that owns it*.
+ *
+ * The effect was that an agent uploading a photo to a new listing — which starts as a draft —
+ * saw the upload succeed and then a blank thumbnail, with a 404 and no explanation. Indisting-
+ * uishable from "the upload is broken", which is what it was reported as.
+ *
+ * The fix is a separate authenticated route rather than optional auth on the public one: making
+ * the guard populate a principal on `@Public()` routes would change the behaviour of every public
+ * endpoint at once, to fix one. Here the auth posture is explicit in the path.
+ */
+@Controller("staff/media")
+@UseGuards(JwtAuthGuard)
+@StaffOnly()
+export class StaffMediaDeliveryController {
+  constructor(private readonly media: MediaService) {}
+
+  @Get(":mediaId/:variant")
+  async serve(
+    @Param("mediaId") mediaId: string,
+    @Param("variant") variant: string,
+    @Req() request: AuthenticatedRequest,
+    @Res() response: Response,
+  ): Promise<void> {
+    // The caller's own tenant context — so RLS resolves in favour of their own drafts, and still
+    // refuses another organisation's inventory.
+    const result = await this.media.streamVariant(mediaId, variant, {
+      organizationId: request.principal!.org!,
+    });
+    if (!result) throw new NotFoundException("Image not found.");
+
+    response.setHeader("Content-Type", result.contentType);
+    // Private, and briefly: an agent who replaces a photo should see the change, and this is a
+    // per-user response that must never be cached by a shared proxy.
+    response.setHeader("Cache-Control", "private, max-age=60");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+
+    result.body.pipe(response);
+  }
+}
+
+/**
  * Staff photo management.
  *
  * `@StaffOnly()` on the class for the usual reason — a route that forgets the decorator would

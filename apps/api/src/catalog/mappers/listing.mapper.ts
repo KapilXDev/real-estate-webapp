@@ -121,6 +121,15 @@ export function toMediaDto(row: ListingMediaRow): ListingMediaDto {
      * client can swap the suffix for `thumb` or `hero`.
      */
     url: `/api/media/${row.id}/card`,
+    /*
+     * All three sizes, so the browser picks per breakpoint rather than always pulling the
+     * card size. Widths match the media module's VARIANTS and must stay in step with them.
+     */
+    variants: [
+      { name: "thumb", url: `/api/media/${row.id}/thumb`, width: 400 },
+      { name: "card", url: `/api/media/${row.id}/card`, width: 800 },
+      { name: "hero", url: `/api/media/${row.id}/hero`, width: 1600 },
+    ],
     caption: row.caption ?? "",
     order: row.sort_order,
   };

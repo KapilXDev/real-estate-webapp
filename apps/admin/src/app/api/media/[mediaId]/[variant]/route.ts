@@ -8,8 +8,10 @@ import { apiFetchRaw } from "@/lib/api";
  * nothing for unpublished inventory. The agent's own drafts would render as broken images, which
  * looks exactly like a failed upload.
  *
- * Going through here attaches the staff token, so the same RLS check resolves in the agent's
- * favour for their own listings and still refuses another organisation's.
+ * ⚠️ It calls `/staff/media/...`, NOT the public `/media/...`. The public route is `@Public()`,
+ * so the guard never verifies a token and the lookup always runs as ANONYMOUS — which means it
+ * refuses a draft's photos even with a valid staff token attached. The staff route runs the same
+ * RLS check under the caller's own organisation.
  */
 export async function GET(
   _request: Request,
@@ -17,9 +19,12 @@ export async function GET(
 ) {
   const { mediaId, variant } = await params;
 
-  const upstream = await apiFetchRaw(`/media/${encodeURIComponent(mediaId)}/${encodeURIComponent(variant)}`, {
-    headers: { accept: "image/*" },
-  });
+  const upstream = await apiFetchRaw(
+    `/staff/media/${encodeURIComponent(mediaId)}/${encodeURIComponent(variant)}`,
+    {
+      headers: { accept: "image/*" },
+    },
+  );
 
   if (!upstream.ok || !upstream.body) return new Response(null, { status: upstream.status });
 

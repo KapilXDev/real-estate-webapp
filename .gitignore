@@ -37,3 +37,6 @@ npm-debug.log*
 
 # Next.js build output for the admin app
 apps/admin/.next
+
+# Per-app local env (Next reads these from the app dir, not the repo root)
+apps/*/.env.local

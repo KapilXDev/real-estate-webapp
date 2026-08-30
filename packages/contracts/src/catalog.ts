@@ -70,8 +70,25 @@ export interface AreaDto {
   conversionFactor?: number;
 }
 
-export interface ListingMediaDto {
+export interface ListingMediaVariantDto {
+  /** "thumb" | "card" | "hero" — see the media module's VARIANTS. */
+  name: string;
   url: string;
+  width: number;
+}
+
+export interface ListingMediaDto {
+  /** The default (card) variant. Always present, so a client can ignore `variants` entirely. */
+  url: string;
+  /**
+   * Every size we generated, so the browser can pick one per breakpoint via `srcset`.
+   *
+   * ⚠️ THIS IS WHY WE DO NOT PUT THESE THROUGH `next/image`. The API has already produced exactly
+   * the sizes the layout needs, in WebP; the optimizer would fetch an 800px WebP and re-encode it
+   * — paying twice for work already done, and coupling the site's build config to the media
+   * host's hostname, whose failure mode is a silently blank image rather than an error.
+   */
+  variants?: ListingMediaVariantDto[];
   caption: string;
   order: number;
 }

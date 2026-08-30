@@ -1,7 +1,11 @@
 import { Module } from "@nestjs/common";
 
 import { IdentityModule } from "../identity/identity.module";
-import { MediaDeliveryController, StaffMediaController } from "./controllers/media.controller";
+import {
+  MediaDeliveryController,
+  StaffMediaController,
+  StaffMediaDeliveryController,
+} from "./controllers/media.controller";
 import { MediaRepository } from "./repositories/media.repository";
 import { ImageProcessingService } from "./services/image-processing.service";
 import { MediaService } from "./services/media.service";
@@ -17,7 +21,7 @@ import { ObjectStorageService } from "./services/object-storage.service";
  */
 @Module({
   imports: [IdentityModule],
-  controllers: [MediaDeliveryController, StaffMediaController],
+  controllers: [MediaDeliveryController, StaffMediaDeliveryController, StaffMediaController],
   providers: [MediaService, MediaRepository, ObjectStorageService, ImageProcessingService],
   exports: [MediaService],
 })

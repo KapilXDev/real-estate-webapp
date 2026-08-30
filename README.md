@@ -48,6 +48,12 @@ npm run admin:dev             # :3002
 npm test --workspace=@tricity/api    # 170 integration tests, ~2s
 ```
 
+⚠️ **`apps/web` and `apps/admin` each need their own `.env.local`.** Next only reads `.env` files
+from its own app directory — it does not walk up to the monorepo root, whereas `apps/api`
+deliberately does. Copy the web/admin blocks out of `.env.example`. The failure mode is
+confusing if you skip it: the dev server starts fine and *then* every page 500s, because the
+config is read at render rather than at boot.
+
 Tests run against a template database cloned per suite — no Testcontainers, no extra dependency.
 
 ## Things that will bite you

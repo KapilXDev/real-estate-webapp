@@ -29,29 +29,16 @@ const nextConfig: NextConfig = {
     contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
 
     /*
-     * Hosts next/image may fetch listing photos from.
+     * ⚠️ INTENTIONALLY EMPTY. Listing photos do NOT go through next/image.
      *
-     * ⚠️ Derived from NEXT_PUBLIC_MEDIA_BASE_URL rather than hardcoded, because that value moves:
-     * it is the API in development and a CDN hostname in production. A mismatch does not warn —
-     * next/image simply refuses the URL and the listing renders with a broken image.
+     * The API already emits exactly-sized WebP variants, so the optimizer would re-encode work
+     * already done — and pointing it at the media host couples this config to an environment
+     * variable whose mismatch fails SILENTLY: `400 "url" parameter is not allowed`, page renders
+     * fine, every photo blank. See components/listings/ListingImage.tsx.
+     *
+     * Add a host here only for images that genuinely need optimizing (editorial photography,
+     * an agent headshot), never for listing media.
      */
-    remotePatterns: (() => {
-      const base = process.env.NEXT_PUBLIC_MEDIA_BASE_URL;
-      if (!base) return [];
-      try {
-        const url = new URL(base);
-        return [
-          {
-            protocol: url.protocol.replace(":", "") as "http" | "https",
-            hostname: url.hostname,
-            port: url.port || undefined,
-            pathname: "/api/media/**",
-          },
-        ];
-      } catch {
-        return [];
-      }
-    })(),
   },
 };
 

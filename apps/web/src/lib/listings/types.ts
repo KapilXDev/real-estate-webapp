@@ -121,8 +121,19 @@ export type Facing =
   | "south-east"
   | "south-west";
 
+export interface ListingMediaVariant {
+  name: string;
+  url: string;
+  width: number;
+}
+
 export interface ListingMedia {
   url: string;
+  /**
+   * Sizes the API generated. Present for real inventory; absent for MockProvider, whose
+   * placeholder route serves one size. `ListingImage` handles both.
+   */
+  variants?: ListingMediaVariant[];
   /** Alt text. Required for accessibility and worth real SEO value on listing pages. */
   caption: string;
   /** 0 is the primary/hero photo. */
