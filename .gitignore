@@ -40,3 +40,12 @@ apps/admin/.next
 
 # Per-app local env (Next reads these from the app dir, not the repo root)
 apps/*/.env.local
+
+# ⚠️ GENERATED, AND ITS CONTENT DEPENDS ON WHICH NEXT COMMAND RAN LAST.
+#
+# `next dev` writes `import "./.next/dev/types/routes.d.ts"`; `next build` writes
+# `./.next/types/...`. So committing it means the file flips back and forth and every branch
+# carries a spurious diff — it changed twice in one afternoon here. Worse, whichever variant is
+# committed points at a path under the gitignored `.next/`, so on a fresh checkout it references
+# a file that does not exist. Both Next commands regenerate it, so there is nothing to lose.
+apps/*/next-env.d.ts
