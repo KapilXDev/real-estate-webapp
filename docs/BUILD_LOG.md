@@ -9,50 +9,47 @@ without re-exploring. Newest entry at the top.
 
 ## NEXT UP — resume point for a fresh session
 
-**Backend is feature-complete for launch; the missing piece is the ADMIN UI.** Catalog, leads and
-media all work, the public site runs on real Postgres inventory, and 158 integration tests guard
-it. But every write path is API-only — the agent cannot add a listing or a photo without curl.
-
-**Read `docs/FLOWS.md`** for the buyer / seller / agent journeys and what is missing.
+**The product is operable.** Buyers search real inventory, enquiries land in Postgres, and the
+agent runs the whole thing from `apps/admin` — listings, photos, enquiries, RERA. 170 integration
+tests. **Read `docs/FLOWS.md`** for the journeys and what is missing.
 
 **Standing facts (do NOT re-diagnose):**
-- 18 migrations applied, seed loaded, PostGIS 3.4. Containers `tricity-postgres`, `tricity-minio`.
+- 19 migrations applied. Containers: `tricity-postgres`, `tricity-minio`.
 - **TWO database roles.** `DATABASE_URL` = `tricity` (owner, superuser locally, DDL only).
-  `APP_DATABASE_URL` = `tricity_app` (serves requests). A superuser ignores RLS — see Step 14.
-- **`apps/api` must `import type` from `@tricity/contracts`, never a value import** — a CommonJS
-  app cannot `require()` raw TypeScript. See Step 15.
-- **Never `${JSON.stringify(x)}::jsonb`. Always `jsonb(sql, x)`** from `database/json-param.ts` —
-  postgres.js double-encodes the first form and it fails silently. See Step 16.
-- Dev staff login: `owner@tricityestate.test` / `dev-owner-password-123`, org `tricity-estate`
-  (flagged `is_host`, holds a Punjab RERA registration only — Chandigarh is deliberately absent so
-  the publication gate can be exercised).
-- `LISTING_PROVIDER=mock` by default. `api` serves real DB inventory and flips `isLiveData` true.
+  `APP_DATABASE_URL` = `tricity_app` (serves requests). A superuser ignores RLS — Step 14.
+- **`apps/api` must `import type` from `@tricity/contracts`** — CJS cannot require raw TS.
+  Step 15.
+- **Never `${JSON.stringify(x)}::jsonb`. Always `jsonb(sql, x)`** — postgres.js double-encodes the
+  first form, silently. Step 16.
+- **Admin token refresh belongs in `proxy.ts`, never in the API client.** Refreshing during a
+  render rotates the token and cannot persist it, which revokes the whole family. Step 17.
+- Dev staff login: `owner@tricityestate.test` / `dev-owner-password-123`. Org `tricity-estate` is
+  `is_host` and holds Punjab + Chandigarh RERA registrations (Haryana deliberately absent so the
+  publication gate can be exercised).
 
-**Next: the admin app.** An approved plan exists — see the plan file referenced in Step 16, or
-rebuild it from here. Decisions already taken: a **separate `apps/admin` Next app** (port 3002),
-**httpOnly cookie BFF** so the browser never holds a JWT, full scope (listings CRUD, photos,
-leads, RERA management).
+**Next, in rough priority:**
 
-1. **Shared foundations first.** `@tricity/contracts` is missing from `transpilePackages`,
-   tsconfig `paths` AND `package.json` in `apps/web` — it resolves on workspace-symlink luck
-   today. Fix before a second app depends on it. Then extract the Tailwind `@theme` block from
-   `apps/web/src/app/globals.css` into `packages/config/theme.css` (that package is an empty stub).
-2. **Three missing API endpoints:** `GET /staff/listings/:id` (the edit form needs the full
-   record; `findForOrg` returns a summary), `GET/PUT /staff/rera` (the repository methods exist,
-   there is no controller at all), `PATCH /staff/leads/:id` (status transitions).
-3. **⚠️ The refresh race is the thing to get right.** Refresh tokens rotate and presenting a used
-   one revokes the whole family. Parallel server-side fetches will refresh concurrently and log
-   the user out of every session. Refresh must be single-flight.
-4. Then the screens. Price input MUST go through `parsePriceInput` ("85 lakh" → 8500000); area
-   input must capture value + unit + **basis** together.
+1. **Speed-to-lead auto-WhatsApp** — the highest-ROI feature left, and the reason `phone` is
+   weighted so heavily in lead scoring. Needs a WhatsApp Business API account and opt-in language.
+   TODO marker is in `leads/services/lead.service.ts`; it must NOT block the lead response.
+2. **The launch content blockers** — real agent details and RERA numbers (the launch guard refuses
+   to serve a public site until they are filled in), real price bands for the 8 locality guides,
+   and OSM polygons to replace the generated circles that currently overlap.
+3. **CI + a git remote.** There is still no remote — everything lives on one machine. A workflow
+   running migrations plus the 170 tests against a Postgres service container is ~30 minutes.
+4. **UI tests** (Playwright) — the admin has none, only API-level coverage.
+5. **Identity `repositories/` extraction** — the one module not on the full layered pattern. Port
+   its throwaway smoke script into the harness first.
+6. **ESLint 9 flat config for `apps/api`** — still none, so `npm run lint` skips the workspace.
 
 **Known-good commands:**
 ```
 npm run db:up && npm run db:migrate && npm run db:app-role && npm run db:seed
 npm run db:bootstrap -- --email you@example.com --name "You" --org "Firm"
-npm run api:dev                        # http://localhost:3001/api
-npm run web:dev                        # http://localhost:3000
-npm test --workspace=@tricity/api      # 158 tests, ~2s
+npm run api:dev        # http://localhost:3001/api
+npm run web:dev        # http://localhost:3000
+npm run admin:dev      # http://localhost:3002
+npm test --workspace=@tricity/api      # 170 tests, ~2s
 ```
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
@@ -62,6 +59,133 @@ npm test --workspace=@tricity/api      # 158 tests, ~2s
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-30 — Step 17: The admin app — the agent can finally run the site
+
+**`apps/admin` on port 3002.** Sign in, manage inventory, upload photos, work the enquiry queue,
+register RERA numbers. Every write path was API-only before this; adding a listing meant
+hand-crafting a POST with a bearer token.
+
+## Why a separate app
+
+Not `/admin` inside `apps/web`. The public site is static, cacheable and crawlable; the admin is
+entirely dynamic and authenticated. Keeping them apart means the public build never carries admin
+code and the admin never has to opt out of caching page by page. The cost is a third deploy
+target — worth restating when the deployment question comes back around.
+
+## 🔴 The refresh race — the bug this step really turned on
+
+The obvious design puts token refresh in the API client: call the API, get a 401, refresh, retry.
+It is wrong here, and wrong in a way that only appears in production.
+
+**Refresh tokens ROTATE, and a Server Component render CANNOT WRITE COOKIES.** So refreshing
+during a render consumes the old token and then throws the replacement away — Next forbids the
+cookie write. The *next* request presents a token the API has already seen, the API correctly
+treats that as theft, and it revokes the entire token family. The user is signed out everywhere,
+roughly fifteen minutes after they last did anything, and the request that fails is not the
+request that caused it.
+
+The refresh-race test found it on the first run: eight parallel requests all returned 200, and
+then the very next request 500'd with a dead session. That is exactly the shape of bug that never
+gets diagnosed from a bug report.
+
+**Refresh now lives in `proxy.ts`**, which runs before rendering and can write both sides —
+`request.cookies.set()` so the current render sees the fresh access token, and
+`response.cookies.set()` so the browser keeps it. It also means ONE refresh per request instead
+of one per API call, which removes the intra-render race outright.
+
+Single-flight is kept for genuinely concurrent requests, **keyed on the refresh token rather than
+held in a module-level variable** — a single variable would serialise refreshes across different
+users sharing the process, and one could receive the other's tokens.
+
+`apiFetch` now redirects to `/login` on a 401 instead of throwing, so a genuinely dead session
+shows a login page rather than a 500.
+
+## Sessions
+
+httpOnly cookies, set by route handlers. The browser never holds a JWT and never learns the API
+origin. An access token in localStorage would mean any XSS anywhere on this app exfiltrates
+something that can create, edit and unpublish listings — and it would force CORS open.
+
+The access cookie deliberately expires at 13 minutes against a 15-minute JWT, so the server
+refreshes early rather than discovering expiry through a 401.
+
+⚠️ **Next 16 renamed `middleware` to `proxy`** — the dev server flags it, the exported function
+must be named `proxy`, and per the docs it may run where shared modules are unavailable. The
+cookie-name constants therefore live in their own import-free module; importing them from
+`session.ts` would drag in `next/headers`, which does not exist in that runtime.
+
+## The screens, and the decisions in them
+
+**Price is typed the way agents speak.** "1.6 crore", "85 lakh", "1,45,00,000" — all parsed
+server-side through `parsePriceInput` and echoed back under the field as **₹1.6 Cr** before
+saving. Reading 1.6 crore as `1.6` is a 10⁵ error that renders as a plausible number on a public
+page, and nobody proofreads a bare numeric input. Parsing happens on the server so a
+half-hydrated form cannot post the wrong magnitude.
+
+**Area is entered once**: value, unit, and *which* area it describes. `Area.of()` returns the
+conversion factor, persisted per row so a later correction to the marla constant cannot restate
+historical listings. Three separate sq ft boxes would have invited mental arithmetic.
+
+**A 403 is read as the RERA gate, not a permissions error.** The form extracts the jurisdiction
+from the message and offers "add your {state} registration" plus a reminder that drafts are
+always allowed. Without that the agent gets a wall of legal text and no way forward.
+
+**Photo reorder is buttons, not drag-and-drop.** No dependency, works with a keyboard, and the
+one ordering decision that matters — which photo is the hero — gets its own explicit button.
+Uploads run sequentially so a fifteen-photo gallery dump does not put fifteen multi-megabyte
+resizes in flight at once.
+
+**Photos render through a local route handler with a plain `<img>`, never `next/image`.** The
+optimizer refetches server-side without the session, and RLS correctly returns nothing for an
+unpublished listing — so every draft's thumbnails would break and look exactly like failed
+uploads.
+
+**WhatsApp is the primary action on an enquiry, not email**, for the same reason `phone`
+outweighs every property attribute in the lead score. `wa.me` needs the number with no `+`, so
+the stored E.164 value is stripped — passing it through opens WhatsApp to a blank chat.
+
+**The RERA screen lists all three jurisdictions separately** and treats an expired registration
+as blocking rather than as a warning: an expired number in an advertisement is a false claim of
+registration, which is worse than none because it looks verified.
+
+## Also in this step
+
+Three staff endpoints that did not exist: `GET /staff/listings/:id` (a STAFF projection — raw
+values, drafts included, deliberately not the public one), `GET/PUT /staff/rera` (the repository
+had existed since 0016 with nothing exposing it, so the only way to register a number was a
+manual INSERT), and `PATCH /staff/leads/:id` with an activity trail.
+
+🔴 **`lead_activity` and `listing_price_history` had no RLS.** A foreign key to a protected table
+constrains what may be INSERTED, not who may SELECT — an unjoined `SELECT * FROM lead_activity`
+read every organisation's follow-up notes, which is what any "recent activity" screen does. Same
+class of gap as `listing_media` in 0018, invisible for the same reason: nothing had written a
+row. `0019` delegates both to the parent. Price history reads through `can_view_listing` rather
+than ownership, because "reduced by ₹5L" belongs on a public page while draft repricing must not.
+
+Also: `apps/web` was resolving `@tricity/contracts` on workspace-symlink luck — absent from
+`transpilePackages`, tsconfig `paths` AND `package.json` while `api-provider.ts` imported a value
+from it. And the Tailwind `@theme` block moved to `packages/config/theme.css` so the two apps
+cannot drift into different palettes.
+
+## Verified
+
+- **170 integration tests** (was 158), all three apps build clean.
+- **6/6 refresh-race checks**: 8 parallel requests all succeed, the session survives, and a
+  garbage token redirects rather than 500s.
+- **31/31 staff endpoint checks**, 37/37 media, 40/40 catalog.
+- Price and area parsing checked against what agents actually type.
+- **End to end:** a Chandigarh listing created at "1.6 crore" and "12 marla" comes back on the
+  public API as `16000000` rupees and `3267` sq ft with `12 MARLA` echoed and factor `272.25`
+  preserved — carrying the **Chandigarh** registration, not the Punjab one.
+
+## Not done
+
+No UI tests. That needs a Playwright decision, and pretending otherwise would be worse than
+saying so. `apps/api` still has no ESLint 9 flat config. Identity still lacks a `repositories/`
+layer.
 
 ---
 
