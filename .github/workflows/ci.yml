@@ -48,7 +48,7 @@ jobs:
         run: npm run db:migrate
 
       - name: Create the least-privilege runtime role
-        # Migration 0019... 0013 creates tricity_app as NOLOGIN; this gives it the password from
+        # Migration 0013 creates tricity_app as NOLOGIN; this gives it the password from
         # APP_DATABASE_URL. Without it every test fails to connect.
         run: npm run db:app-role
 
