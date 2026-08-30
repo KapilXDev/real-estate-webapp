@@ -423,6 +423,34 @@ export function ListingForm({
         </div>
       </section>
 
+      {/*
+        ⚠️ SUCCESS HAS TO BE SAID OUT LOUD, because on an edit nothing else changes. The page stays
+        put and the fields keep their values, so a save that worked and a save that silently did
+        nothing look identical — which is exactly how a completely broken update path went
+        unnoticed for as long as it existed.
+
+        No redirect on success, on purpose. The edit page is where the work happens: upload photos,
+        adjust the price, publish. Bouncing to the list after every save would mean navigating back
+        for the next change. Creation is the exception and does redirect, because after creating a
+        listing the next thing that matters is photos.
+      */}
+      {state.saved !== undefined && (
+        <p
+          // Announced to screen readers, and `key` on the timestamp so a SECOND save re-announces
+          // rather than React seeing identical markup and staying silent.
+          key={state.saved}
+          role="status"
+          aria-live="polite"
+          className="rounded-card border border-status-active/30 bg-status-active/10 px-4 py-3 text-sm text-status-active"
+        >
+          {state.savedStatus === "active"
+            ? "Saved and published. It is live on the site now."
+            : state.savedStatus === "coming-soon"
+              ? "Saved as a draft. It is not on the public site — set Status to Published when you are ready."
+              : "Saved."}
+        </p>
+      )}
+
       <div className="flex gap-3">
         <button
           type="submit"

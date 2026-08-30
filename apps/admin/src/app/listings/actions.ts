@@ -21,6 +21,20 @@ export interface ListingFormState {
   /** Set when the RERA gate blocks publication, so the UI can link to the fix. */
   reraBlockedState?: string;
   fieldErrors?: Record<string, string>;
+  /**
+   * When the last save succeeded.
+   *
+   * ⚠️ A TIMESTAMP RATHER THAN `true`, DELIBERATELY. React only re-runs effects and re-announces
+   * live regions when the value actually changes, so a boolean would confirm the first save and
+   * then say nothing on the second — which reads as the second one having failed.
+   *
+   * It exists at all because an edit that succeeds is otherwise indistinguishable from one that
+   * does nothing: the page stays put, the fields keep their values, and there is no message. That
+   * is precisely how a genuinely broken save went unnoticed (see the mode note on `buildPayload`).
+   */
+  saved?: number;
+  /** Echoed back so the confirmation can name what changed, e.g. "Published". */
+  savedStatus?: string;
 }
 
 /**
@@ -267,5 +281,6 @@ export async function updateListing(
   revalidatePath("/listings");
   revalidatePath(`/listings/${listingId}`);
   await revalidateSite();
-  return {};
+
+  return { saved: Date.now(), savedStatus: String(patch.status ?? "") };
 }

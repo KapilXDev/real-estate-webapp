@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { ADMIN_URL, SITE_URL } from "../support/env";
 import { uniqueTitle } from "../support/marker";
 import { createListing, listingField, priceEcho } from "../support/listing-form";
+import { fixturePath } from "../support/global-setup";
 
 /**
  * What an agent does all day: type a price the way they say it, publish, and look at the site.
@@ -138,4 +139,71 @@ test("a draft is not published to the site", async ({ page, context }) => {
   const site = await context.newPage();
   await site.goto(`${SITE_URL}/search?area=mohali/${localitySlug}`);
   await expect(site.locator(`a[href="/listings/${listingId}"]`)).toHaveCount(0);
+});
+
+/**
+ * Draft → published, on the agent's own credibility page, with the confirmations that tell them
+ * it worked.
+ *
+ * ⚠️ THIS IS THE FLOW THAT ACTUALLY CONFUSED A USER, AND EVERY PART OF IT WAS A REASONABLE THING
+ * TO BE CONFUSED BY. A new listing defaults to Draft and is therefore invisible on the public
+ * site — correct, but indistinguishable from a broken save when nothing says so. Saving an edit
+ * produced no message at all. And photos save on selection, not on "Save changes", which the
+ * screen never said.
+ *
+ * `/listings` on the site is a stricter test than `/search`: it additionally requires `is_host`,
+ * so it only shows the agent's own inventory.
+ */
+test("a draft is invisible on the agent's own listings page until it is published", async ({
+  page,
+  context,
+}) => {
+  const listingId = await createListing(page, {
+    city: CITY,
+    locality: LOCALITY,
+    title: uniqueTitle("draft then publish"),
+    price: "2.1 crore",
+    areaValue: "12",
+    areaUnit: "marla",
+    status: "Draft",
+  });
+
+  const ownListings = `${SITE_URL}/listings`;
+  const site = await context.newPage();
+  await site.goto(ownListings);
+  await expect(site.locator(`a[href="/listings/${listingId}"]`)).toHaveCount(0);
+
+  /* The draft save has to SAY it is a draft. Silence here is what reads as a failed save. */
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText(/Saved as a draft/)).toBeVisible();
+
+  await listingField(page, "status").selectOption({ label: "Published" });
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText(/Saved and published/)).toBeVisible();
+
+  await site.reload();
+  await expect(
+    site.locator(`a[href="/listings/${listingId}"]`),
+    "published, but still missing from the agent's own listings page",
+  ).toHaveCount(1);
+});
+
+test("photos are saved on selection, and say so", async ({ page }) => {
+  await createListing(page, {
+    city: CITY,
+    locality: LOCALITY,
+    title: uniqueTitle("photo feedback"),
+    price: "70 lakh",
+    areaValue: "4",
+    areaUnit: "marla",
+    status: "Draft",
+  });
+
+  /*
+   * No submit involved — choosing the file IS the save. Without the confirmation an agent either
+   * waits for one that is never coming, or clicks "Save changes" expecting it to commit the
+   * photos and reads the absence of any message as the upload having been lost.
+   */
+  await page.setInputFiles('input[type="file"]', fixturePath());
+  await expect(page.getByText(/1 photo added and saved/)).toBeVisible({ timeout: 30_000 });
 });

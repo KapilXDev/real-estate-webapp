@@ -11,7 +11,7 @@ without re-exploring. Newest entry at the top.
 
 **The product is operable and now has browser coverage.** Buyers search real inventory, enquiries
 land in Postgres, and the agent runs the whole thing from `apps/admin`. 170 integration tests plus
-22 Playwright tests. **Read `docs/FLOWS.md`** for the journeys and what is missing.
+26 Playwright tests. **Read `docs/FLOWS.md`** for the journeys and what is missing.
 
 **Standing facts (do NOT re-diagnose):**
 - 19 migrations applied. Containers: `tricity-postgres`, `tricity-minio`.
@@ -29,6 +29,9 @@ land in Postgres, and the agent runs the whole thing from `apps/admin`. 170 inte
   the row is locked `FOR UPDATE`. Step 22.
 - **A parameter used only in `$n IS NOT NULL` has no inferable type** and fails the whole statement
   at parse time with 42P18. Cast it. Step 21.
+- **A new listing is a DRAFT** (`coming-soon` → `PENDING_REVIEW`). Public pages serve only
+  `ACTIVE` / `UNDER_OFFER`, and `/listings` on the site additionally requires `is_host`. Publish
+  from the listing's Status field. Step 23.
 - Dev staff login: `owner@tricityestate.test` / `dev-owner-password-123`. Org `tricity-estate` is
   `is_host` and holds Punjab + Chandigarh RERA registrations (Haryana deliberately absent so the
   publication gate can be exercised).
@@ -71,7 +74,7 @@ npm run api:dev        # http://localhost:3001/api
 npm run web:dev        # http://localhost:3000
 npm run admin:dev      # http://localhost:3002
 npm test --workspace=@tricity/api      # 170 tests, ~2s
-npm run test:e2e                       # 22 browser tests, ~35s, needs all three servers
+npm run test:e2e                       # 26 browser tests, ~22s, needs all three servers
 ```
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
@@ -81,6 +84,43 @@ npm run test:e2e                       # 22 browser tests, ~35s, needs all three
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-30 — Step 23: Say when a save worked, and that photos save themselves
+
+Small, and prompted by a user hitting all three of these in one sitting: a new listing did not
+appear on the public site, saving gave no feedback at all, and it was not clear how to publish.
+
+None of it was a logic bug. A new listing defaults to Draft (`coming-soon` → `PENDING_REVIEW`) and
+the public pages only serve `ACTIVE` / `UNDER_OFFER`, which is correct — the site must not
+advertise inventory the agent has not chosen to advertise. But nothing on the screen said so, and
+"correct but silent" is indistinguishable from broken.
+
+**An edit that succeeds now says so.** Previously `updateListing` returned `{}` and the page simply
+stayed put with the same values in the same fields, so a working save and a save that did nothing
+looked identical. That is not a hypothetical resemblance: it is exactly how the completely broken
+update path found in step 21 survived hand-testing. The message names the outcome rather than just
+confirming — "Saved as a draft. It is not on the public site" closes the loop on the first question
+above, and "Saved and published. It is live on the site now" closes it on the third.
+
+`saved` is a TIMESTAMP, not a boolean. React only re-announces a live region when the value
+changes, so a boolean would confirm the first save and stay silent on the second — which reads as
+the second having failed.
+
+**Photos say they saved, because they save at a different time from everything else.** Choosing a
+file IS the upload; the "Save changes" button below belongs to the listing fields and has nothing
+to do with the photo grid. The screen never said that, so an agent either waits for a confirmation
+that is not coming or clicks Save changes expecting it to commit the photos.
+
+**No redirect after an edit, deliberately.** The edit page is where the work happens — upload
+photos, adjust the price, publish — and returning to the list after every save means navigating
+back for the next change. Creation is the exception and still redirects to the new listing, because
+after creating one the next thing that matters is photos.
+
+Two regression tests: a draft is absent from the agent's own listings page and appears once
+published (a stricter check than `/search`, since that page also requires `is_host`), and a photo
+upload reports itself. 26 browser tests.
 
 ---
 

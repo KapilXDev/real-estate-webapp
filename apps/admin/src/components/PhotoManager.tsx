@@ -36,6 +36,13 @@ export function PhotoManager({
   const [photos, setPhotos] = useState(initialPhotos);
   const [uploading, setUploading] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * ⚠️ Photos save on SELECTION, not on "Save changes" — the button below belongs to the listing
+   * fields and has nothing to do with these. That is not obvious from the screen, and an agent who
+   * assumes otherwise will either wait for a confirmation that is not coming or navigate away
+   * believing the upload was lost. Saying "added" explicitly is the cheapest way to close the gap.
+   */
+  const [added, setAdded] = useState(0);
 
   /*
    * ⚠️ RESYNC WHEN THE SERVER LIST CHANGES. `useState(initialPhotos)` reads the prop ONCE, at
@@ -64,7 +71,9 @@ export function PhotoManager({
 
   async function upload(files: FileList) {
     setError(null);
+    setAdded(0);
     setUploading(files.length);
+    let succeeded = 0;
 
     /*
      * Sequential, not Promise.all. Each upload decodes and resizes a multi-megabyte image on the
@@ -82,6 +91,8 @@ export function PhotoManager({
           const detail = (await response.json().catch(() => ({}))) as { error?: string };
           // Name the file — with a multi-file upload, "invalid image" alone is useless.
           setError(`${file.name}: ${detail.error ?? "upload failed"}`);
+        } else {
+          succeeded += 1;
         }
       } catch {
         setError(`${file.name}: could not reach the server.`);
@@ -91,6 +102,7 @@ export function PhotoManager({
     }
 
     if (inputRef.current) inputRef.current.value = "";
+    setAdded(succeeded);
     router.refresh();
   }
 
@@ -153,10 +165,16 @@ export function PhotoManager({
           onChange={(e) => e.target.files && upload(e.target.files)}
           className="text-sm text-sand-700 file:mr-3 file:rounded-card file:border-0 file:bg-brand-700 file:px-4 file:py-2 file:text-white"
         />
-        {uploading > 0 && (
+        {uploading > 0 ? (
           <span className="text-sm text-sand-600" aria-live="polite">
             Uploading {uploading}…
           </span>
+        ) : (
+          added > 0 && (
+            <span className="text-sm text-status-active" role="status" aria-live="polite">
+              {added} photo{added === 1 ? "" : "s"} added and saved.
+            </span>
+          )
         )}
       </div>
 
