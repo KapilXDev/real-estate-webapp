@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+/*
+ * Shared design tokens — the same ones the public site uses. See packages/config/theme.css.
+ * Imported rather than redefined so the two apps cannot drift apart visually.
+ */
+@import "../../../../packages/config/theme.css";
+
+:root {
+  --background: var(--color-sand-50);
+  --foreground: var(--color-sand-950);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Admin is a keyboard-heavy tool — data entry, tabbing through a long form. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-brand-600);
+    outline-offset: 2px;
+  }
+}

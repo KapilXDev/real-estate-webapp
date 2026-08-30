@@ -34,3 +34,6 @@ infra/docker/volumes/
 # logs
 *.log
 npm-debug.log*
+
+# Next.js build output for the admin app
+apps/admin/.next

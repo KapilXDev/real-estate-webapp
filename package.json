@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "web:dev": "npm run dev --workspace=@tricity/web",
+    "admin:dev": "npm run dev --workspace=@tricity/admin",
     "api:dev": "npm run start:dev --workspace=@tricity/api",
     "db:up": "docker compose -f infra/docker/docker-compose.yml up -d postgres",
     "db:down": "docker compose -f infra/docker/docker-compose.yml down",
