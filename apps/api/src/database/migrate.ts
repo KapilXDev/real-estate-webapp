@@ -2,6 +2,8 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import postgres from "postgres";
 
+import { loadEnvFile } from "../config/load-env";
+
 /**
  * Migration runner.
  *
@@ -104,6 +106,7 @@ export async function runMigrations(connectionString: string): Promise<void> {
 
 // Allow `npm run db:migrate` to invoke this directly.
 if (require.main === module) {
+  loadEnvFile();
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     console.error("DATABASE_URL is not set. Copy .env.example to .env first.");

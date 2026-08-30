@@ -87,6 +87,11 @@ in a different town.
 `is_approximate = true` / `boundary_source = 'GENERATED_RADIUS'`. Replace with real OSM polygons
 before launch — the Overpass query is in the header of `packages/geo/src/tricity.ts`.
 
+**⚠️ The generated boundaries OVERLAP, so a point resolves to MORE THAN ONE locality.** Confirmed
+against the live database: a point in central Chandigarh `ST_Intersects` both Sector 27 and
+Sector 33. Never write locality resolution that assumes a single hit — rank by distance to
+centroid and expect ties until real polygons land.
+
 ## Content strategy: sparse on purpose
 
 Editorial copy lives in `apps/web/src/config/localities.ts`, an **overlay** keyed by
@@ -108,44 +113,44 @@ figures, before launch.
   listings, about, contact, EMI/stamp-duty calculator, market reports, sitemap, robots, JSON-LD.
 - **Phase 2 — search/filters/saved-search/lead scoring done.** Remaining: user accounts +
   favourites, and actually *sending* alerts (needs an email/WhatsApp provider).
-- **Backend — identity slice built, unrun.** `apps/api` boots: helmet, CORS, zod-validated config,
-  global throttler, JWT guard, health probes, and a full identity module (staff email+password,
-  consumer phone-OTP + linked email/password, rotating refresh tokens with reuse detection).
-  Verified against a live process. **But 11 migrations have never executed**, so no query has ever
-  reached a real Postgres — see the blocker below.
+- **Backend — identity slice RUNNING against real Postgres.** `apps/api` serves helmet, CORS,
+  zod-validated config, a global throttler, the JWT guard, health probes, and a full identity
+  module (staff email+password, consumer phone-OTP + linked email/password, rotating refresh
+  tokens with reuse detection). All 12 migrations applied, seed loaded, 28/28 end-to-end checks
+  passing. **No automated tests yet** — every bug so far was found by hand. That is the next job.
 - **Phase 3 — NOT STARTED.** AI natural-language search, grounded concierge chatbot,
   speed-to-lead auto-WhatsApp (TODO marker in `src/app/api/leads/route.ts`), automated market emails.
 
-## 👉 START HERE — the blocker should now be cleared
+## 👉 START HERE — the database is up and the backend is proven
 
-**On 2026-08-29 the user installed WSL and Docker Desktop and rebooted.** The long-standing
-blocker is expected to be gone. **Do not re-diagnose the machine** — virtualization is on in BIOS,
-`winget` works, Docker Desktop is installed. Just verify and go:
+**The long-standing blocker is GONE.** Docker runs, all 12 migrations have applied, the seed is
+loaded, and the identity module has been exercised end to end against real Postgres (28/28
+checks). **Do not re-diagnose the machine and do not re-verify the schema** — see Step 13 in the
+build log for exactly what was run and what it found.
 
 ```
-docker version                 # engine should now respond
-npm run db:up                  # PostGIS via infra/docker/docker-compose.yml
-npm run db:migrate             # 11 migrations — NEVER RUN BEFORE
-npm run db:seed                # 6 cities, 102 localities
+npm run db:up          # PostGIS container (postgis/postgis:16-3.4, name tricity-postgres)
+npm run db:migrate     # idempotent, checksum-verified
+npm run db:seed        # 6 cities, 102 localities
+npm run api:dev        # http://localhost:3001/api
 ```
 
-**Expect the migrations to fail on the first attempt.** All 11 were authored without a database to
-run them against, so syntax and ordering errors are likely and are *normal* — fix them in place
-rather than treating them as a design problem. Highest-risk files: `0011_auth_lookup.sql`
-(SECURITY DEFINER functions, written last and never parsed) and `0005_catalog.sql` (PostGIS
-columns + generated tsvector).
+Dev staff credentials, if you need a signed-in session:
+`owner@tricityestate.test` / `dev-owner-password-123`. If the volume was reset, recreate with
+`npm run db:bootstrap -- --email you@example.com --name "You" --org "Firm"` — there is no staff
+registration route by design, so this command is the only way the first admin exists.
 
-After migrations pass, verify PostGIS is real:
-`SELECT PostGIS_Version();` and `EXPLAIN` an `ST_Intersects` query to confirm the GiST index is used.
+**The next job is tests, ahead of any new feature.** Every bug so far was found by hand, and
+nothing in the repo guards any of it. In priority order:
 
-Then the first tests worth writing, in order:
-1. **That `FORCE ROW LEVEL SECURITY` actually bites** — one org must not be able to read another's
-   listing. This is the single most valuable test in the repo; see the RLS note below for why.
+1. **That `FORCE ROW LEVEL SECURITY` actually bites** — one org must not be able to read
+   another's listing. It already shipped as a silent no-op once and nothing caught it. Single
+   most valuable test in the repo; see the RLS note below.
 2. `can_view_listing()` across every tier × visibility × status.
 3. Refresh-token rotation: presenting a used token must revoke the whole family.
+4. `withTenant()` leaks no org across pooled connections.
 
-If Docker still will not start, the fallback (native Postgres + PostGIS, no Testcontainers) is
-written up in `docs/SETUP.md`, along with why it was rejected.
+Then: catalog module, then `ApiProvider` in `apps/web` to replace `MockProvider`.
 
 ## Backend rules that are easy to get catastrophically wrong
 
@@ -157,6 +162,18 @@ written up in `docs/SETUP.md`, along with why it was rejected.
   disabling RLS and never by setting `is_platform_admin` (which would grant an unauthenticated
   caller admin over every table). Anything added there must pin `search_path` and return the
   minimum columns.
+- **Every `SECURITY DEFINER` function MUST pin `search_path = pg_catalog, public`.** Not
+  theoretical here: the postgis image sets a database-level
+  `search_path = "$user", public, topology, tiger`, so a `$user` schema resolves ahead of
+  everything. `can_view_listing()` shipped unpinned and was fixed in `0012`.
+- **Principal-kind decorators (`@StaffOnly` / `@ContactOnly`) go on the CONTROLLER CLASS, not the
+  route.** The guard only checks a kind when a route asks for one, so a route that forgets the
+  decorator accepts a valid token of the *wrong* kind — `/auth/staff/me` answered a buyer's
+  phone-OTP token before this was fixed. At class level, safe is the default.
+- **Drizzle and raw SQL must never share a postgres.js client.** `drizzle(sql)` overwrites that
+  client's json and date/time codecs *in place*, globally, so raw queries then fail to serialise
+  a `Date` (a driver-internal `ERR_INVALID_ARG_TYPE`) and read timestamps back as strings still
+  typed `Date`. They get separate clients — see the block comment in `database/client.ts`.
 - **Always `withTenant()`, never raw `this.sql`, for tenant-scoped queries.** It uses
   `set_config(..., true)` — the parameterised `SET LOCAL`. A plain `SET` persists on a pooled
   connection and leaks the previous request's org to the next one.

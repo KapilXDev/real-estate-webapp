@@ -9,31 +9,40 @@ without re-exploring. Newest entry at the top.
 
 ## NEXT UP — resume point for a fresh session
 
-**Status as of the last session: WSL + Docker Desktop were installed by the user and the machine
-was rebooted. The blocker is expected to be CLEARED.** Everything below is now unblocked.
+**The database blocker is GONE. Every migration has run, the schema is real, and the identity
+module has been exercised end to end against live Postgres (28/28 checks).** Nothing below is
+speculative any more — see Step 13.
 
-1. **Bring the database up and run the migrations for the first time.**
-   ```
-   docker version && npm run db:up && npm run db:migrate && npm run db:seed
-   ```
-   **Expect failures on the first run.** All 11 migrations were authored without a database to
-   execute them against — syntax and ordering errors are normal here, not a sign of bad design.
-   Fix in place. Riskiest files: `0011_auth_lookup.sql` (SECURITY DEFINER, written last, never
-   parsed) and `0005_catalog.sql` (PostGIS + generated tsvector).
-2. Verify PostGIS: `SELECT PostGIS_Version();` and `EXPLAIN` an `ST_Intersects` query to confirm
-   the GiST index is actually used.
-3. Smoke the identity module against a real Postgres — it has never issued a query. Boot the API
-   (`npm run api:dev`) and exercise staff login and the phone-OTP flow end to end. In development
-   the OTP is returned as `devCode`, so no SMS provider is needed.
-4. Testcontainers integration tests, in priority order:
-   - **That `FORCE ROW LEVEL SECURITY` actually bites** — one org must not read another's listing.
-     Single most valuable test in the repo; see Step 12 for why it was a silent no-op before.
-   - `can_view_listing()` across every tier × visibility × status.
-   - Refresh-token rotation and reuse detection: a used token must revoke the whole family.
-5. Then: catalog module, then `ApiProvider` in `apps/web` to replace `MockProvider`.
+**Standing environment facts (do NOT re-diagnose):**
+- `docker version` responds. Container `tricity-postgres`, image `postgis/postgis:16-3.4`.
+- 12 migrations applied, seed loaded: 6 cities, 102 localities. PostGIS 3.4, GEOS + PROJ.
+- Dev credentials for smoke work: `owner@tricityestate.test` / `dev-owner-password-123`
+  (org `tricity-estate`), created via `npm run db:bootstrap` — see Step 13.
 
-**Working tree is clean at `1bd1bd7`.** Nothing is half-finished; steps 11 and 12 are both
-committed whole.
+**Next, in order:**
+
+1. **Testcontainers integration tests.** This is now the whole job — the code works, but nothing
+   is guarding it. Priority order, and the first one matters far more than the rest:
+   - **That `FORCE ROW LEVEL SECURITY` actually bites.** Two orgs, one listing each; org A must
+     get zero rows for org B's listing. Step 12 shipped this as a silent no-op once already, and
+     nothing would have caught it. Single most valuable test in the repo.
+   - `can_view_listing()` across every (tier × visibility × status) combination. 4 tiers × 3
+     visibilities × 9 statuses — table-drive it.
+   - Refresh rotation + reuse detection (currently only covered by the throwaway smoke script).
+   - `withTenant()` leaks nothing across pooled connections: run two interleaved transactions and
+     assert the second cannot see the first's `app.current_org_id`.
+2. **Catalog module** — property/listing CRUD for staff, public search for the site.
+3. **`ApiProvider` in `apps/web`** to replace `MockProvider`, behind the existing
+   `LISTING_PROVIDER` env seam.
+
+**Known-good commands:**
+```
+npm run db:up          # PostGIS container
+npm run db:migrate     # idempotent, checksum-verified
+npm run db:seed        # idempotent
+npm run db:bootstrap -- --email you@example.com --name "You" --org "Firm"
+npm run api:dev        # http://localhost:3001/api
+```
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
 
@@ -42,6 +51,127 @@ committed whole.
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-29 — Step 13: First contact with a real database — schema runs, identity works, 3 bugs
+
+**The 11-migration wall came down.** Docker started, the schema built, and every line of the
+identity module ran against real Postgres for the first time. The migrations themselves were
+close to clean; the interesting failures were all in the layer *above* them, and none of them
+were the ones anticipated.
+
+### Migrations: better than expected, one real fix
+
+All 12 applied. `0011_auth_lookup.sql` and `0005_catalog.sql` — flagged as highest-risk because
+they were written last and never parsed — both went through without edits.
+
+`0012_pin_search_path.sql` was added: `can_view_listing()` is `SECURITY DEFINER` but was created
+**without a pinned `search_path`**, while all three functions in 0011 pin theirs. An unpinned
+definer-rights function resolves its own identifiers through the *caller's* `search_path`, so
+anyone able to create objects in an earlier-resolving schema can shadow `partner_relationship`
+and answer "may this org read this listing" themselves — with owner rights. That is the entire
+cross-tenant boundary.
+
+**This is not hypothetical here.** The `postgis/postgis` image sets a database-level
+`search_path = "$user", public, topology, tiger`, so this database ships with extra schemas ahead
+of nothing and a `$user` slot that resolves first. Verified after the fix — all four
+`SECURITY DEFINER` functions now report `search_path=pg_catalog, public`.
+
+A new migration rather than an edit to 0010: the runner checksums applied files and rejects
+changed ones, which is the behaviour we want even when the file is one commit old.
+
+### 🔴 Three bugs found by running the code
+
+**1. Drizzle silently corrupts a shared postgres.js client — and it presents as a driver crash.**
+
+`drizzle(sql)` reaches into the client it is handed and overwrites `options.serializers` and
+`options.parsers` **in place**, for every query that client will ever run, including raw tagged
+templates Drizzle knows nothing about. It swaps the handlers for json/jsonb and the date/time
+OIDs for the identity function, because it does its own mapping.
+
+Sharing one client therefore breaks raw SQL in both directions: binding a `Date` throws
+`ERR_INVALID_ARG_TYPE ... Received an instance of Date` from inside postgres.js with a stack that
+points at driver internals, and reads come back as **strings typed as `Date`** — so every
+`row.expires_at.getTime()` in the identity module (OTP expiry, token expiry, resend cooldown) is
+a runtime TypeError that `tsc` cannot see, because the row type is a hand-written assertion.
+
+This is exactly how the OTP endpoint failed on its first ever call. The two regimes cannot be
+reconciled on one client — Drizzle *requires* the identity parsers — so they now get separate
+clients. Drizzle's is lazy: nothing uses it yet (the identity module is all raw SQL), so it costs
+zero connections until something does. `DatabaseService.db` became a getter for that reason, and
+`close()` shuts both pools.
+
+**2. `/auth/staff/me` accepted a CONSUMER's token.**
+
+The guard only enforces a principal kind when the route asks for one, and `/me` had no
+`@StaffOnly()`. A buyer who signed in by phone OTP held a signed, unexpired, entirely valid token
+that the staff endpoint answered — reporting `role: "CONTACT"` rather than refusing. The next
+staff route added would have inherited the same default.
+
+Fixed by moving `@StaffOnly()` / `@ContactOnly()` to the **class**, so safe is the default and a
+new route has to opt *out* to be wrong. `@Public()` routes still work — the guard reads handler
+metadata ahead of class metadata and returns before the kind check.
+
+**3. Nothing loaded `.env`.**
+
+`@nestjs/config` was removed in step 11 (its v12 line is pure ESM, unimportable from this CJS
+app) and nothing replaced its file loading. Every entrypoint saw an empty `DATABASE_URL` and died
+blaming the operator for a missing file that was sitting right there.
+
+`config/load-env.ts` uses `util.parseEnv` rather than `process.loadEnvFile()` **because
+loadEnvFile overwrites variables that are already set** — in a real deployment config arrives
+from the platform, and a stray `.env` winning over an injected `DATABASE_URL` is how a staging
+process ends up writing to a dev database. Here, existing values always win. It walks up to the
+workspace-root `package.json` rather than using a fixed relative hop, because the file runs from
+two different depths (`apps/api/src/config` under tsx, `apps/api/dist/apps/api/src/config`
+compiled, since `rootDir: "../../"` is mirrored under outDir) — a hardcoded hop is correct in
+exactly one of the two and silently resolves to nothing in the other.
+
+Also: `.env.example` had drifted badly out of sync with the zod schema — it advertised RS256
+keypairs (`JWT_PRIVATE_KEY_BASE64`) when the code uses HS256 secrets, plus `API_PORT` for `PORT`
+and `CORS_ALLOWED_ORIGINS` for `CORS_ORIGINS`. Copying it produced a boot failure on every
+variable. Rewritten against the schema.
+
+### `db:bootstrap` — the first admin had no way to exist
+
+There is deliberately no staff-registration route (an open door onto the tenant that owns the
+platform), and staff are created by invitation — which leaves nobody able to invite the first
+admin. `seed/bootstrap-org.ts` is a one-shot operator command that closes the gap without adding
+anything reachable over HTTP. A hardcoded default credential was the alternative, and that is the
+most reliably exploited misconfiguration there is.
+
+It writes `app_user` inside a transaction that sets `app.current_org_id` to the new org, so the
+insert satisfies `app_user_tenant_policy`'s `WITH CHECK` **honestly** — `app.is_platform_admin`
+would also work and is deliberately not used, since it would grant the script write access to
+every table in the schema in order to insert one row. Idempotent on the organisation, but an
+existing user email is a hard error rather than a silent password reset: "bootstrap ran twice"
+and "someone is resetting the owner's credentials" are indistinguishable from inside the script.
+With no `--password` it generates 144 bits and prints it once.
+
+### Verified against live Postgres
+
+28/28 checks in an end-to-end smoke pass — staff login (wrong password, unknown user, and short
+password all distinguishable only in the ways intended), staff `/me`, phone-OTP request → verify
+→ replay-rejected, contact password linking and login, **principal-kind separation in all three
+directions**, and refresh rotation where presenting a used token kills the whole family. The
+account-enumeration defence holds: unknown user and wrong password return byte-identical bodies.
+
+PostGIS is real. `PostGIS_Version()` → `3.4 USE_GEOS=1 USE_PROJ=1 USE_STATS=1`, and an
+`ST_Intersects` against `locality.boundary` picks `locality_boundary_idx` (GiST) **naturally**,
+without needing `enable_seqscan=off`, even at 102 rows.
+
+**⚠️ That query also confirmed the generated-boundary problem empirically:** a point in central
+Chandigarh falls inside **two** localities (Sector 27 and Sector 33), because the boundaries are
+overlapping circles from the grid model. Any "which locality is this in?" lookup will return
+multiple answers until real OSM polygons replace them. Do not build locality resolution assuming
+a single hit.
+
+### Still not covered
+
+**Every one of these bugs was found by hand.** There is still no automated test in the repo, and
+in particular nothing verifies that `FORCE ROW LEVEL SECURITY` bites — the one that already
+shipped broken once. That is the next step, ahead of any new feature.
 
 ---
 

@@ -24,6 +24,7 @@ import {
   ContactOnly,
   JwtAuthGuard,
   Public,
+  StaffOnly,
   type AuthenticatedRequest,
 } from "./jwt-auth.guard";
 import { StaffAuthService } from "./staff-auth.service";
@@ -45,8 +46,22 @@ function requestMeta(request: Request) {
  * Staff
  * ------------------------------------------------------------------ */
 
+/*
+ * ⚠️ `@StaffOnly()` is applied to the CLASS, not to individual routes.
+ *
+ * The guard only enforces a principal kind when the route asks for one, so a staff route that
+ * forgets the decorator accepts a CONSUMER's access token — a signed, unexpired, entirely valid
+ * token belonging to a buyer who signed in by phone OTP. That is not a theoretical gap: `/me`
+ * shipped without it and happily answered a contact token with `role: "CONTACT"`, and the next
+ * staff route added would have inherited the same default.
+ *
+ * At class level the safe answer is the default and a new route has to opt OUT to be wrong.
+ * The `@Public()` routes below still work: the guard resolves handler metadata ahead of class
+ * metadata and returns early for public routes before the kind check is reached.
+ */
 @Controller("auth/staff")
 @UseGuards(JwtAuthGuard)
+@StaffOnly()
 export class StaffAuthController {
   constructor(private readonly auth: StaffAuthService) {}
 
@@ -98,8 +113,10 @@ export class StaffAuthController {
  * Consumers
  * ------------------------------------------------------------------ */
 
+/** Class-level for the same reason as StaffAuthController above — see that note. */
 @Controller("auth/contact")
 @UseGuards(JwtAuthGuard)
+@ContactOnly()
 export class ContactAuthController {
   constructor(private readonly auth: ContactAuthService) {}
 

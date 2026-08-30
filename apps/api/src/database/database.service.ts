@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 
 import { APP_CONFIG, type AppConfig } from "../config/configuration";
-import { createDbClient, type Database, type RawSql } from "./client";
+import { createDbClient, type Database, type DbClient, type RawSql } from "./client";
 
 /**
  * Tenant context carried into every scoped query.
@@ -23,16 +23,26 @@ export const ANONYMOUS: TenantContext = {
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
   private readonly logger = new Logger(DatabaseService.name);
+  private readonly client: DbClient;
   readonly sql: RawSql;
-  readonly db: Database;
 
   constructor(@Inject(APP_CONFIG) config: AppConfig) {
-    const client = createDbClient({
+    this.client = createDbClient({
       connectionString: config.DATABASE_URL,
       max: config.DATABASE_POOL_MAX,
     });
-    this.sql = client.sql;
-    this.db = client.db;
+    this.sql = this.client.sql;
+  }
+
+  /**
+   * Drizzle handle, for typed queries.
+   *
+   * A getter, not a constructor-assigned field: reading it opens Drizzle's own connection pool,
+   * and Drizzle must never be given the raw client (it rewrites that client's date/json codecs in
+   * place — see the warning in client.ts). Nothing uses this yet, so nothing pays for it yet.
+   */
+  get db(): Database {
+    return this.client.db;
   }
 
   /**
@@ -96,6 +106,7 @@ export class DatabaseService implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.sql.end({ timeout: 5 });
+    // Closes both pools — the raw one and Drizzle's, if it was ever opened.
+    await this.client.close();
   }
 }

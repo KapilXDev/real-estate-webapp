@@ -14,6 +14,8 @@
     "db:down": "docker compose -f infra/docker/docker-compose.yml down",
     "db:generate": "npm run db:generate --workspace=@tricity/api",
     "db:migrate": "npm run db:migrate --workspace=@tricity/api",
+    "db:seed": "npm run db:seed --workspace=@tricity/api",
+    "db:bootstrap": "npm run db:bootstrap --workspace=@tricity/api --",
     "lint": "nx run-many -t lint",
     "test": "nx run-many -t test",
     "build": "nx run-many -t build"

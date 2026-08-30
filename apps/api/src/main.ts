@@ -1,5 +1,11 @@
 import "reflect-metadata";
 
+import { loadEnvFile } from "./config/load-env";
+
+// Must run before any module reads process.env (configuration.ts validates at import-time of the
+// DI factory, which happens during NestFactory.create below).
+loadEnvFile();
+
 import { Logger, ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";

@@ -2,6 +2,8 @@ import postgres from "postgres";
 
 import { CITIES, LOCALITIES, circlePolygon } from "@tricity/geo";
 
+import { loadEnvFile } from "../../config/load-env";
+
 /**
  * Seed runner.
  *
@@ -107,6 +109,7 @@ async function seed(connectionString: string): Promise<void> {
 }
 
 if (require.main === module) {
+  loadEnvFile();
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     console.error("DATABASE_URL is not set. Copy .env.example to .env first.");
