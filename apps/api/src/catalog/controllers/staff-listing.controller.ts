@@ -75,4 +75,15 @@ export class StaffListingController {
   async list(@Req() request: AuthenticatedRequest, @Query("status") status?: string) {
     return this.listings.listForOrg({ organizationId: request.principal!.org! }, status);
   }
+
+  /**
+   * One listing, for the edit form.
+   *
+   * ⚠️ Returns the STAFF projection, not the public one — raw stored values, drafts included, no
+   * derived RERA or agent fields. See `staff-listing.row.ts` for why the two are separate types.
+   */
+  @Get(":listingId")
+  async getOne(@Param("listingId") listingId: string, @Req() request: AuthenticatedRequest) {
+    return this.listings.getForEdit(listingId, { organizationId: request.principal!.org! });
+  }
 }

@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 
 import { DatabaseService, type TenantContext } from "../../database/database.service";
 import { jsonb } from "../../database/json-param";
+import type { StaffListingRow, StaffListingSummaryRow } from "../dao/staff-listing.row";
 
 export interface ListingWriteInput {
   organizationId: string;
@@ -192,17 +193,76 @@ export class ListingWriteRepository {
   async findForOrg(
     context: TenantContext,
     options: { status?: string; limit?: number } = {},
-  ): Promise<{ id: string; reference_code: string; status: string; price: string; title: string | null }[]> {
+  ): Promise<StaffListingSummaryRow[]> {
     return this.database.withTenant(context, async (tx) => {
-      return tx<
-        { id: string; reference_code: string; status: string; price: string; title: string | null }[]
-      >`
-        SELECT id, reference_code, status::text AS status, price, title
-        FROM listing
-        WHERE (${options.status ?? null}::text IS NULL OR status::text = ${options.status ?? null})
-        ORDER BY updated_at DESC
+      return tx<StaffListingSummaryRow[]>`
+        SELECT
+          l.id, l.reference_code, l.status::text AS status, l.price, l.title,
+          l.visibility::text AS visibility, l.possession::text AS possession,
+          l.updated_at,
+          loc.slug AS locality_slug, c.slug AS city_slug,
+          -- Photo count drives the "needs photos" nudge on the list screen. A listing with no
+          -- pictures converts so badly that surfacing it is worth the subquery.
+          (SELECT count(*) FROM listing_media m
+            WHERE m.listing_id = l.id AND m.processing_status = 'READY')::int AS photo_count
+        FROM listing l
+        JOIN property p   ON p.id = l.property_id
+        JOIN locality loc ON loc.id = p.locality_id
+        JOIN city c       ON c.id = loc.city_id
+        WHERE (${options.status ?? null}::text IS NULL OR l.status::text = ${options.status ?? null})
+        ORDER BY l.updated_at DESC
         LIMIT ${options.limit ?? 100}
       `;
+    });
+  }
+
+  /**
+   * One listing with every field the edit form needs.
+   *
+   * ⚠️ Deliberately NOT reusing `ListingRepository.selection()`. That projection is shaped for the
+   * PUBLIC wire contract — it resolves RERA registrations, joins the agent name, and is filtered
+   * by `publicScope` to exclude drafts. The edit form needs the opposite: raw stored values,
+   * drafts included, and no derived presentation. Sharing one projection between "what a buyer
+   * sees" and "what an agent edits" is how a draft eventually leaks into a public response.
+   *
+   * Tenant-scoped by RLS; returns null for another organisation's listing, which the service
+   * reports as 404 rather than 403.
+   */
+  async findOneForEdit(
+    listingId: string,
+    context: TenantContext,
+  ): Promise<StaffListingRow | null> {
+    return this.database.withTenant(context, async (tx) => {
+      const rows = await tx<StaffListingRow[]>`
+        SELECT
+          l.id, l.reference_code, l.status::text AS status,
+          l.transaction_type::text AS transaction_type, l.visibility::text AS visibility,
+          l.possession::text AS possession, l.possession_date,
+          l.price, l.price_on_request, l.close_price, l.maintenance_monthly,
+          l.furnishing::text AS furnishing, l.title, l.description, l.features,
+          l.published_at, l.created_at, l.updated_at,
+
+          p.id AS property_id, p.property_type::text AS property_type,
+          p.address_line, p.plot_number, p.pincode,
+          ST_Y(p.location::geometry) AS lat,
+          ST_X(p.location::geometry) AS lng,
+          p.plot_area_sqft, p.built_up_area_sqft, p.carpet_area_sqft,
+          p.area_input_value, p.area_input_unit::text AS area_input_unit,
+          p.area_conversion_factor, p.area_input_basis::text AS area_input_basis,
+          p.bedrooms, p.bathrooms, p.balconies, p.total_floors, p.floor_number,
+          p.facing::text AS facing, p.year_built,
+
+          loc.slug AS locality_slug, c.slug AS city_slug, c.state AS city_state,
+          (SELECT count(*) FROM listing_media m
+            WHERE m.listing_id = l.id AND m.processing_status = 'READY')::int AS photo_count
+        FROM listing l
+        JOIN property p   ON p.id = l.property_id
+        JOIN locality loc ON loc.id = p.locality_id
+        JOIN city c       ON c.id = loc.city_id
+        WHERE l.id = ${listingId}
+        LIMIT 1
+      `;
+      return rows[0] ?? null;
     });
   }
 

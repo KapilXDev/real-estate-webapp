@@ -3,6 +3,7 @@ import { Module } from "@nestjs/common";
 import { IdentityModule } from "../identity/identity.module";
 import { PublicCatalogController } from "./controllers/public-catalog.controller";
 import { StaffListingController } from "./controllers/staff-listing.controller";
+import { StaffReraController } from "./controllers/staff-rera.controller";
 import { ListingRepository } from "./repositories/listing.repository";
 import { ListingWriteRepository } from "./repositories/listing-write.repository";
 import { PropertyRepository } from "./repositories/property.repository";
@@ -28,7 +29,7 @@ import { ListingAdminService } from "./services/listing-admin.service";
  */
 @Module({
   imports: [IdentityModule],
-  controllers: [PublicCatalogController, StaffListingController],
+  controllers: [PublicCatalogController, StaffListingController, StaffReraController],
   providers: [
     CatalogService,
     ListingAdminService,

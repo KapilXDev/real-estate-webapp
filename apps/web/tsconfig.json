@@ -20,6 +20,7 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
+      "@tricity/contracts": ["../../packages/contracts/src/index.ts"],
       "@tricity/domain": ["../../packages/domain/src/index.ts"],
       "@tricity/geo": ["../../packages/geo/src/index.ts"]
     }

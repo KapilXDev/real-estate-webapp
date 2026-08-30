@@ -155,6 +155,57 @@ export class LeadRepository {
     });
   }
 
+  /**
+   * Move a lead through the pipeline.
+   *
+   * ⚠️ Returns false rather than throwing when nothing matched. RLS filters another org's lead to
+   * zero rows, so "not yours" and "does not exist" are indistinguishable here by design — the
+   * service reports both as 404 so the endpoint cannot be used to probe which lead ids exist in a
+   * competitor's pipeline.
+   *
+   * `assigned_user_id` is validated by the FK, not by a lookup: assigning to a user in another
+   * organisation fails on the constraint, which is the check we want and one round trip fewer.
+   */
+  async updateStatus(
+    leadId: string,
+    patch: { status?: string; assignedUserId?: string | null },
+    context: TenantContext,
+  ): Promise<boolean> {
+    return this.database.withTenant(context, async (tx) => {
+      const rows = await tx<{ id: string }[]>`
+        UPDATE lead SET
+          status = coalesce(${patch.status ?? null}::lead_status, status),
+          assigned_user_id =
+            CASE WHEN ${patch.assignedUserId !== undefined}
+                 THEN ${patch.assignedUserId ?? null}
+                 ELSE assigned_user_id END,
+          updated_at = now()
+        WHERE id = ${leadId}
+        RETURNING id
+      `;
+      return rows.length > 0;
+    });
+  }
+
+  /**
+   * Append to the lead's activity trail.
+   *
+   * Every status change is recorded. Follow-up history is the thing an agent actually needs six
+   * weeks later ("did anyone call this person?"), and it cannot be reconstructed from the current
+   * status alone.
+   */
+  async recordActivity(
+    input: { leadId: string; actorUserId?: string; type: string; body?: string },
+    context: TenantContext,
+  ): Promise<void> {
+    await this.database.withTenant(context, async (tx) => {
+      await tx`
+        INSERT INTO lead_activity (lead_id, actor_user_id, type, body)
+        VALUES (${input.leadId}, ${input.actorUserId ?? null}, ${input.type}, ${input.body ?? null})
+      `;
+    });
+  }
+
   /** The follow-up queue: kind first, then score. Tenant-scoped by RLS. */
   async findForOrg(context: TenantContext, limit = 100): Promise<LeadRow[]> {
     return this.database.withTenant(context, async (tx) => {

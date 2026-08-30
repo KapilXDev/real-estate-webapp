@@ -4,6 +4,8 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -17,6 +19,7 @@ import {
   type AuthenticatedRequest,
 } from "../../identity/guards/jwt-auth.guard";
 import { CreateLeadDto } from "../dto/create-lead.dto";
+import { UpdateLeadDto } from "../dto/update-lead.dto";
 import { LeadService } from "../services/lead.service";
 
 /**
@@ -58,5 +61,19 @@ export class StaffLeadController {
   @Get()
   async list(@Req() request: AuthenticatedRequest) {
     return this.leads.listForOrg({ organizationId: request.principal!.org! });
+  }
+
+  /** Move a lead through the pipeline. Every change is appended to its activity trail. */
+  @Patch(":leadId")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async update(
+    @Param("leadId") leadId: string,
+    @Body() dto: UpdateLeadDto,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<void> {
+    await this.leads.updateStatus(leadId, dto, {
+      organizationId: request.principal!.org!,
+      userId: request.principal!.sub,
+    });
   }
 }

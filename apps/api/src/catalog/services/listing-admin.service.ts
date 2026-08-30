@@ -8,6 +8,7 @@ import {
 
 import type { TenantContext } from "../../database/database.service";
 import type { CreateListingDto, UpdateListingDto } from "../dto/write-listing.dto";
+import { toStaffListing, toStaffListingSummary } from "../mappers/staff-listing.mapper";
 import {
   FACING_TO_DB,
   FURNISHING_TO_DB,
@@ -202,7 +203,20 @@ export class ListingAdminService {
   }
 
   async listForOrg(principal: { organizationId: string }, status?: string) {
-    return this.listings.findForOrg({ organizationId: principal.organizationId }, { status });
+    const rows = await this.listings.findForOrg(
+      { organizationId: principal.organizationId },
+      { status },
+    );
+    return rows.map(toStaffListingSummary);
+  }
+
+  /** One listing, with every field the edit form needs to round-trip it. */
+  async getForEdit(listingId: string, principal: { organizationId: string }) {
+    const row = await this.listings.findOneForEdit(listingId, {
+      organizationId: principal.organizationId,
+    });
+    if (!row) throw new NotFoundException("Listing not found.");
+    return toStaffListing(row);
   }
 
   /** The jurisdiction a locality falls under, for the RERA gate. */

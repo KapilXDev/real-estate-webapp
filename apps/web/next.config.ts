@@ -6,7 +6,14 @@ const nextConfig: NextConfig = {
    * step, so Next has to compile them itself. Without this they arrive as untranspiled TS and the
    * build fails on the first type annotation.
    */
-  transpilePackages: ["@tricity/domain", "@tricity/geo"],
+  /*
+   * ⚠️ EVERY workspace package the app imports must be listed. These ship raw TypeScript and are
+   * compiled by the consumer, so an omitted one is not a build error — it resolves through the
+   * node_modules workspace symlink and happens to work until a clean install or a bundler change
+   * says otherwise. `@tricity/contracts` was missing here while `api-provider.ts` imported a
+   * VALUE from it, which is exactly that latent failure.
+   */
+  transpilePackages: ["@tricity/contracts", "@tricity/domain", "@tricity/geo"],
 
   images: {
     /**

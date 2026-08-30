@@ -1,4 +1,4 @@
-import { Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import type { CreateLeadRequestDto, CreateLeadResponseDto } from "@tricity/contracts";
 
 import type { TenantContext } from "../../database/database.service";
@@ -128,6 +128,48 @@ export class LeadService {
     this.logger.log(`Lead ${id} captured (kind=${input.kind}, score=${score})`);
 
     return { id, received: true };
+  }
+
+  /**
+   * Move a lead through the pipeline, recording the change on its activity trail.
+   *
+   * ⚠️ The activity row is written AFTER the status update and is not rolled back with it — the
+   * two are separate transactions. That is a deliberate simplification: losing a trail entry is an
+   * annoyance, whereas failing the status change because the note failed to write would be worse.
+   * If the trail ever becomes something to reconcile against, both belong in one `withTenant`.
+   */
+  async updateStatus(
+    leadId: string,
+    patch: { status?: string; assignedUserId?: string | null; note?: string },
+    principal: { organizationId: string; userId: string },
+  ): Promise<void> {
+    const context: TenantContext = { organizationId: principal.organizationId };
+
+    const updated = await this.leads.updateStatus(
+      leadId,
+      { status: patch.status, assignedUserId: patch.assignedUserId },
+      context,
+    );
+    // Not found and not yours are the same answer — RLS filtered it, and distinguishing them
+    // would turn this into a probe for which lead ids exist in a rival's pipeline.
+    if (!updated) throw new NotFoundException("Lead not found.");
+
+    const parts: string[] = [];
+    if (patch.status) parts.push(`status → ${patch.status}`);
+    if (patch.assignedUserId !== undefined) {
+      parts.push(patch.assignedUserId ? "reassigned" : "unassigned");
+    }
+    if (patch.note) parts.push(patch.note);
+
+    await this.leads.recordActivity(
+      {
+        leadId,
+        actorUserId: principal.userId,
+        type: patch.status ? "STATUS_CHANGE" : "NOTE",
+        body: parts.join(" · ") || undefined,
+      },
+      context,
+    );
   }
 
   /** The follow-up queue for a signed-in staff member's organisation. */
