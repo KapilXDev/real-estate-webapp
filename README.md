@@ -46,6 +46,7 @@ npm run admin:dev             # :3002
 
 ```bash
 npm test --workspace=@tricity/api    # 170 integration tests, ~2s
+npm run test:e2e                     # 22 browser tests, ~35s — needs all three servers running
 ```
 
 ⚠️ **`apps/web` and `apps/admin` each need their own `.env.local`.** Next only reads `.env` files
@@ -54,7 +55,14 @@ deliberately does. Copy the web/admin blocks out of `.env.example`. The failure 
 confusing if you skip it: the dev server starts fine and *then* every page 500s, because the
 config is read at render rather than at boot.
 
-Tests run against a template database cloned per suite — no Testcontainers, no extra dependency.
+Integration tests run against a template database cloned per suite — no Testcontainers, no extra
+dependency.
+
+The browser tests in `e2e/` are the opposite by design: they drive Chromium against the real dev
+stack, because what they check — a photo actually decoding, a cookie actually being resent, a
+publish actually reaching the public site — only exists once the three processes are wired
+together. They clean up after themselves by matching an `[E2E]` marker, the same way
+`db:demo` matches `[SAMPLE]`. See the header of `e2e/playwright.config.ts`.
 
 ## Things that will bite you
 

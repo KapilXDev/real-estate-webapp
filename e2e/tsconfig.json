@@ -1,0 +1,21 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    /* Playwright transpiles each file on its own with esbuild and never type-checks the project,
+     * so this config exists for the editor and for `tsc --noEmit`. CommonJS matches how Playwright
+     * loads these files. */
+    /* DOM alongside the base ES2023: the assertions run inside the page via `evaluate`, so
+     * HTMLImageElement and friends have to be in scope even though nothing here ships to a
+     * browser. */
+    "lib": ["ES2023", "DOM"],
+    "module": "commonjs",
+    /* "bundler" rather than "node10": Playwright transpiles each file with esbuild and resolves
+     * like a bundler, and node10 is deprecated in TypeScript 6. */
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "noEmit": true,
+    "resolveJsonModule": true
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "test-results", "playwright-report", ".auth", "fixtures"]
+}

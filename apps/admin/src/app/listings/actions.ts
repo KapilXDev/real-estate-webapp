@@ -23,6 +23,22 @@ export interface ListingFormState {
   fieldErrors?: Record<string, string>;
 }
 
+/**
+ * Field errors, plus a banner so they can never be invisible.
+ *
+ * ⚠️ A field error is only ever seen if the field that renders it is on screen. The edit form
+ * omits half the fields by design, so a validation failure keyed to one of them produced a form
+ * that refused to save and said nothing at all. The specific cause is fixed above; this makes the
+ * whole class survivable — whatever else goes wrong, the agent gets a visible message rather than
+ * a dead button.
+ */
+function rejected(fieldErrors: Record<string, string>): ListingFormState {
+  return {
+    fieldErrors,
+    error: `Could not save: ${Object.values(fieldErrors).join(" ")}`,
+  };
+}
+
 const AREA_UNITS: AreaUnit[] = ["SQ_FT", "SQ_YD", "MARLA", "KANAL", "ACRE", "BIGHA", "SQ_M"];
 
 function str(form: FormData, key: string): string | undefined {
@@ -45,7 +61,29 @@ function int(form: FormData, key: string): number | undefined {
  * Returned rather than thrown so every problem is reported at once — a form that surfaces one
  * error per submit is miserable to fill in.
  */
-function buildPayload(form: FormData): { payload?: Record<string, unknown>; errors?: Record<string, string> } {
+/**
+ * @param mode `"create"` validates the whole form. `"update"` validates only the offer fields.
+ *
+ * ⚠️⚠️ THE MODE IS NOT AN OPTIMISATION — WITHOUT IT, EDITING A LISTING SILENTLY DOES NOTHING.
+ *
+ * The edit form deliberately omits location and property attributes: changing them would mean it
+ * is a different property, dragging its leads and price history along. So `citySlug`,
+ * `localitySlug`, `lat` and `lng` are simply absent from the FormData on an update — and the
+ * unconditional checks below then recorded "Choose a locality" and "Enter valid coordinates",
+ * returned early, and never called the API.
+ *
+ * The failure was invisible from every direction. Those two errors render against the City and
+ * Latitude fields, which do not exist on the edit form, so nothing appeared. No error banner, no
+ * network call, no log — the agent clicked Save changes and the page sat there looking saved.
+ * Every edit path was affected: price, status, description, features. Publishing a draft from the
+ * edit screen — the normal way a listing goes live — could not work at all.
+ *
+ * Caught by the browser suite, which changed a price and then looked at the public site.
+ */
+function buildPayload(
+  form: FormData,
+  mode: "create" | "update",
+): { payload?: Record<string, unknown>; errors?: Record<string, string> } {
   const errors: Record<string, string> = {};
 
   /*
@@ -63,14 +101,16 @@ function buildPayload(form: FormData): { payload?: Record<string, unknown>; erro
 
   const citySlug = str(form, "citySlug");
   const localitySlug = str(form, "localitySlug");
-  // Always a pair — a bare locality slug is ambiguous across the tricity's three
-  // sector-numbering municipalities, and guessing wrong files the property in another town.
-  if (!citySlug || !localitySlug) errors.locality = "Choose a locality.";
-
   const lat = Number(str(form, "lat"));
   const lng = Number(str(form, "lng"));
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    errors.location = "Enter valid coordinates.";
+
+  if (mode === "create") {
+    // Always a pair — a bare locality slug is ambiguous across the tricity's three
+    // sector-numbering municipalities, and guessing wrong files the property in another town.
+    if (!citySlug || !localitySlug) errors.locality = "Choose a locality.";
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      errors.location = "Enter valid coordinates.";
+    }
   }
 
   /*
@@ -88,7 +128,9 @@ function buildPayload(form: FormData): { payload?: Record<string, unknown>; erro
   const areaBasis = str(form, "areaBasis") as "PLOT" | "BUILT_UP" | "CARPET" | undefined;
 
   let areaFields: Record<string, unknown> = {};
-  if (areaValueRaw) {
+  // Area is create-only for the same reason as location — it describes the property, not the
+  // offer — so on an update there is nothing here to validate.
+  if (mode === "create" && areaValueRaw) {
     const value = Number(areaValueRaw);
     if (!Number.isFinite(value) || value <= 0) {
       errors.area = "Area must be a positive number.";
@@ -169,8 +211,8 @@ export async function createListing(
   _prev: ListingFormState,
   form: FormData,
 ): Promise<ListingFormState> {
-  const { payload, errors } = buildPayload(form);
-  if (errors) return { fieldErrors: errors };
+  const { payload, errors } = buildPayload(form, "create");
+  if (errors) return rejected(errors);
 
   const result = await apiFetch<{ id: string }>("/staff/listings", {
     method: "POST",
@@ -193,8 +235,8 @@ export async function updateListing(
   _prev: ListingFormState,
   form: FormData,
 ): Promise<ListingFormState> {
-  const { payload, errors } = buildPayload(form);
-  if (errors) return { fieldErrors: errors };
+  const { payload, errors } = buildPayload(form, "update");
+  if (errors) return rejected(errors);
 
   /*
    * The update endpoint deliberately accepts only the offer fields — location and property

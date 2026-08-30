@@ -67,8 +67,20 @@ export class MediaDeliveryController {
    * Deliberately loose compared to the other public routes. A single listing page pulls a dozen
    * images at once, and a browser opening six parallel connections must not trip the limiter —
    * the failure mode is a page of broken images, which looks like the site is broken.
+   *
+   * ⚠️⚠️ BOTH NAMED LIMITERS MUST BE OVERRIDDEN, NOT JUST `default`. `ThrottlerModule.forRoot`
+   * declares two — `short` (10 per SECOND) and `default` (120 per minute) — and `@Throttle` only
+   * replaces the ones it names. Raising `default` alone left `short` in force, so the eleventh
+   * image in any one second got a 429 and the browser rendered a blank box for it. A search page
+   * with fifteen cards therefore lost a third of its photos, exactly the failure this decorator
+   * was written to prevent, and it is invisible to any test that fetches one image at a time.
+   *
+   * Found by the browser suite: 20 parallel requests to one image returned ten 200s and ten 429s.
    */
-  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  @Throttle({
+    short: { limit: 200, ttl: 1_000 },
+    default: { limit: 600, ttl: 60_000 },
+  })
   @Get(":mediaId/:variant")
   async serve(
     @Param("mediaId") mediaId: string,
@@ -132,6 +144,16 @@ export class MediaDeliveryController {
 export class StaffMediaDeliveryController {
   constructor(private readonly media: MediaService) {}
 
+  /*
+   * ⚠️ Same two-limiter trap as the public delivery route above — see the long note there. The
+   * admin's photo grid loads every thumbnail on a listing at once, so without raising `short`
+   * (10 per second) an agent with a dozen photos sees the last few as grey boxes, which is
+   * indistinguishable from a failed upload.
+   */
+  @Throttle({
+    short: { limit: 200, ttl: 1_000 },
+    default: { limit: 600, ttl: 60_000 },
+  })
   @Get(":mediaId/:variant")
   async serve(
     @Param("mediaId") mediaId: string,

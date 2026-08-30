@@ -5,7 +5,8 @@
   "description": "Real estate platform for the Chandigarh / Mohali / Kharar tricity market",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "e2e"
   ],
   "scripts": {
     "web:dev": "npm run dev --workspace=@tricity/web",
@@ -21,6 +22,7 @@
     "db:demo": "npm run db:demo --workspace=@tricity/api --",
     "lint": "nx run-many -t lint",
     "test": "nx run-many -t test",
+    "test:e2e": "npm run e2e --workspace=@tricity/e2e",
     "build": "nx run-many -t build"
   },
   "engines": {

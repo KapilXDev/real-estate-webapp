@@ -37,6 +37,31 @@ export function PhotoManager({
   const [uploading, setUploading] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+   * ⚠️ RESYNC WHEN THE SERVER LIST CHANGES. `useState(initialPhotos)` reads the prop ONCE, at
+   * mount — React does not reinitialise state when a prop changes. After an upload,
+   * `router.refresh()` re-renders the page and hands down a new `initialPhotos`, but this
+   * component keeps the array it was born with, so the grid went on saying "No photos yet"
+   * while the upload had in fact returned 201.
+   *
+   * That is the worst possible failure for this screen: no error, no spinner, no photo. The
+   * rational response is to upload again, and again — each retry storing another copy — and then
+   * to conclude the tool is broken. It survived review because a hard reload shows the photos,
+   * which is exactly what anyone testing by hand does.
+   *
+   * This is React's documented "adjusting state when a prop changes" pattern: compare against the
+   * last-seen server list during render and reset. The local copy has to stay, because reordering
+   * is optimistic — waiting for a round trip before the picture moves feels broken.
+   *
+   * The signature includes `status` so a photo that finishes processing also lands.
+   */
+  const serverSignature = initialPhotos.map((p) => `${p.id}:${p.status}:${p.order}`).join(",");
+  const [lastServerSignature, setLastServerSignature] = useState(serverSignature);
+  if (serverSignature !== lastServerSignature) {
+    setLastServerSignature(serverSignature);
+    setPhotos(initialPhotos);
+  }
+
   async function upload(files: FileList) {
     setError(null);
     setUploading(files.length);

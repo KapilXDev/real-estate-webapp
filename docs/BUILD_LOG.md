@@ -9,9 +9,9 @@ without re-exploring. Newest entry at the top.
 
 ## NEXT UP — resume point for a fresh session
 
-**The product is operable.** Buyers search real inventory, enquiries land in Postgres, and the
-agent runs the whole thing from `apps/admin` — listings, photos, enquiries, RERA. 170 integration
-tests. **Read `docs/FLOWS.md`** for the journeys and what is missing.
+**The product is operable and now has browser coverage.** Buyers search real inventory, enquiries
+land in Postgres, and the agent runs the whole thing from `apps/admin`. 170 integration tests plus
+22 Playwright tests. **Read `docs/FLOWS.md`** for the journeys and what is missing.
 
 **Standing facts (do NOT re-diagnose):**
 - 19 migrations applied. Containers: `tricity-postgres`, `tricity-minio`.
@@ -21,26 +21,47 @@ tests. **Read `docs/FLOWS.md`** for the journeys and what is missing.
   Step 15.
 - **Never `${JSON.stringify(x)}::jsonb`. Always `jsonb(sql, x)`** — postgres.js double-encodes the
   first form, silently. Step 16.
-- **Admin token refresh belongs in `proxy.ts`, never in the API client.** Refreshing during a
-  render rotates the token and cannot persist it, which revokes the whole family. Step 17.
+- **Admin token refresh belongs in `proxy.ts`, never in the API client.** Step 17.
+- **`@Throttle` only replaces the named limiters it lists.** There are two — `short` (10/sec) and
+  `default` — and overriding one leaves the other in force. Step 21.
+- **A parameter used only in `$n IS NOT NULL` has no inferable type** and fails the whole statement
+  at parse time with 42P18. Cast it. Step 21.
 - Dev staff login: `owner@tricityestate.test` / `dev-owner-password-123`. Org `tricity-estate` is
   `is_host` and holds Punjab + Chandigarh RERA registrations (Haryana deliberately absent so the
   publication gate can be exercised).
+- A second dev organisation, `e2e-gate-firm`, exists purely so the browser suite can exercise the
+  RERA gate against an empty compliance record. Not `is_host`; invisible on the site.
+
+**🔴 TWO KNOWN BUGS ARE RECORDED AS `test.fail()` IN THE BROWSER SUITE. Both need a decision:**
+
+1. **Two concurrent requests after access-token expiry revoke the whole refresh family** and sign
+   the agent out everywhere. Measured: at N=2, one request is bounced and the session is dead
+   afterwards. `session-refresh.spec.ts` has the numbers. The fix is a rotation grace interval —
+   in `proxy.ts` (cache old→new briefly) or, more correctly, in the API beside reuse detection.
+2. **React 19 resets the listing form after a Server Action**, so a RERA refusal wipes everything
+   the agent typed except the price. `rera-gate.spec.ts`. Needs the submitted values echoed back
+   through `ListingFormState`.
 
 **Next, in rough priority:**
 
-1. **Speed-to-lead auto-WhatsApp** — the highest-ROI feature left, and the reason `phone` is
+1. **Fix the two bugs above.** The refresh one is a live sign-out bug for anyone with two tabs.
+2. **Speed-to-lead auto-WhatsApp** — the highest-ROI feature left, and the reason `phone` is
    weighted so heavily in lead scoring. Needs a WhatsApp Business API account and opt-in language.
    TODO marker is in `leads/services/lead.service.ts`; it must NOT block the lead response.
-2. **The launch content blockers** — real agent details and RERA numbers (the launch guard refuses
+3. **The launch content blockers** — real agent details and RERA numbers (the launch guard refuses
    to serve a public site until they are filled in), real price bands for the 8 locality guides,
    and OSM polygons to replace the generated circles that currently overlap.
-3. **CI + a git remote.** There is still no remote — everything lives on one machine. A workflow
-   running migrations plus the 170 tests against a Postgres service container is ~30 minutes.
-4. **UI tests** (Playwright) — the admin has none, only API-level coverage.
-5. **Identity `repositories/` extraction** — the one module not on the full layered pattern. Port
+4. **Put the browser suite in CI.** The workflow already runs migrations and the integration
+   tests against a Postgres service container; this needs MinIO plus the three servers.
+5. **A git remote.** Still none — everything lives on one machine.
+6. **Integration coverage for `ListingWriteRepository.update()`** — it had none, which is how a
+   statement that could never parse shipped. Step 21.
+7. **Identity `repositories/` extraction** — the one module not on the full layered pattern. Port
    its throwaway smoke script into the harness first.
-6. **ESLint 9 flat config for `apps/api`** — still none, so `npm run lint` skips the workspace.
+8. **ESLint 9 flat config for `apps/api`** — still none, so `npm run lint` skips the workspace.
+9. **`@tricity/geo` has no Panchkula localities**, so no listing can be created in Haryana and the
+   Haryana RERA gate is unreachable from the UI. Either add them or drop Haryana from the RERA
+   screen.
 
 **Known-good commands:**
 ```
@@ -50,6 +71,7 @@ npm run api:dev        # http://localhost:3001/api
 npm run web:dev        # http://localhost:3000
 npm run admin:dev      # http://localhost:3002
 npm test --workspace=@tricity/api      # 170 tests, ~2s
+npm run test:e2e                       # 22 browser tests, ~35s, needs all three servers
 ```
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
@@ -59,6 +81,179 @@ npm test --workspace=@tricity/api      # 170 tests, ~2s
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-30 — Step 21: Browser tests, and the four bugs they found on the first run
+
+**`e2e/` — 22 Playwright tests against the real dev stack.** Chosen over the other candidates
+because the previous three commits were *all* bugs that passed every one of the 170 integration
+tests and were only found by someone opening the page.
+
+## Why a browser suite was the right next thing
+
+The three photo bugs of step 20 share a shape: **the server was right and the product was broken.**
+A CORP header the browser enforces and the server never sees. An optimizer returning 400 while the
+page still renders. A cache tag serving a stale list. None of them is observable from a status
+code, and each cost an evening.
+
+So the assertions here are deliberately not about responses. The core one is
+`img.naturalWidth > 0` — true only if the browser fetched the bytes, decoded them, AND was allowed
+to paint them. All three photo bugs fail that single property.
+
+## What it covers
+
+Photos render on the site (and never through `next/image`); price typed as "1.6 crore" is echoed
+as ₹1.6 Cr before saving; publish and edit reach the public site immediately; a draft does not; an
+agent sees their own draft's photos while an anonymous caller gets a 404 for the same one; the RERA
+gate refuses publication with a way forward and a draft still saves; registering a jurisdiction
+unblocks it; an expired access token refreshes silently and the rotated token survives a second
+refresh; a crafted `?from=//evil.example` cannot redirect off-site; and an enquiry submitted on the
+site arrives in the agent's queue with a working `wa.me` link.
+
+## 🔴 Four real bugs, none of which any existing test could see
+
+**1. Every listing update was a 500 — and the admin never sent one anyway.** Two independent bugs
+stacked, the first hiding the second.
+
+`buildPayload` in the admin validated `citySlug`, `localitySlug`, `lat` and `lng` unconditionally.
+The edit form deliberately omits all four (location is immutable — a different address is a
+different property), so every edit failed validation and returned before calling the API. Those two
+errors render against the City and Latitude fields, which do not exist on that form, so **nothing
+appeared**: no banner, no request, no log. Save changes looked like it had worked.
+
+Underneath, `ListingWriteRepository.update()` could never have run either. A parameter used only in
+`IS NOT NULL` gives Postgres no way to infer its type, so the statement failed to PARSE with
+`42P18: could not determine data type of parameter $17` — always, regardless of the patch. No
+integration test covers `update()`, and the admin bug meant no request ever arrived to expose it.
+
+Publishing a draft from the edit screen is the normal way a listing goes live. It could not work.
+
+Fixed: `buildPayload` takes a mode and only validates location/area on create; a field error now
+always comes with a visible banner so this class cannot be silent again; and every `patch.status`
+parameter is cast to `::listing_status`.
+
+**2. `@Throttle` only overrides the limiters it names.** `ThrottlerModule.forRoot` declares
+`short` (10 per SECOND) and `default` (120/min). The media route raised `default` to 600/min with a
+comment explaining that a listing page pulls a dozen images at once and must not trip the limiter —
+but left `short` in force. Measured: 20 parallel requests to one image returned ten 200s and ten
+429s. A search page with fifteen cards therefore lost a third of its photos, which is the exact
+failure that decorator was written to prevent. Same trap on the staff delivery route. Both now
+override `short` as well.
+
+**3. Uploading a photo showed nothing until a hard reload.** `PhotoManager` did
+`useState(initialPhotos)`, and React does not reinitialise state when a prop changes.
+`router.refresh()` re-rendered the page with the new list; the component kept the array it was born
+with. So the upload returned 201 and the grid went on saying "No photos yet" — no error, no
+spinner, no photo. The rational response is to upload again, storing another copy each time. It
+survived review because a hard reload shows them, which is exactly what anyone testing by hand
+does. Fixed with React's documented "adjust state when a prop changes" pattern, keyed on a
+signature of the server list so optimistic reordering still works.
+
+**4. Two concurrent requests after token expiry kill the session.** Left as a `test.fail()` rather
+than patched, because the remedy is a design call. Measured at N=2, N=3 and N=6: one request is
+always bounced and the family is always revoked afterwards. The single-flight in `proxy.ts` only
+collapses requests that overlap the exchange; a straggler arriving just after it completes still
+carries the old cookie, because the browser has not yet seen the response replacing it. An agent
+with two tabs, idle past the 13-minute access-cookie lifetime, is signed out of both. The usual
+remedy is a rotation grace interval — Auth0 and Okta both have one — either in `proxy.ts` or,
+more correctly, in the API beside reuse detection.
+
+Also recorded as `test.fail()`: **React 19 resets the form after a Server Action**, so a RERA
+refusal wipes everything typed except the price, which survives only because it is controlled for
+the price echo. Being told "add your registration, or save as a draft" and then finding the form
+blank is how an agent decides the tool is not worth using.
+
+## Test-design decisions worth keeping
+
+**Against the dev stack, not a disposable one** — the inverse of `apps/api/test`, and for a
+principled reason. The integration suite clones a template database per file because it asserts
+things about the schema. These assert things about the browser, and everything they exercise
+requires the three processes wired together as the agent uses them. Standing up a parallel stack to
+buy isolation would double the moving parts in order to test the wiring between them.
+
+The price is that isolation is earned by discipline: every row carries an `[E2E]` marker and
+teardown deletes exactly those, the same way `db:demo` matches `[SAMPLE]`. Cleanup runs before the
+run as well as after, because a cancelled run otherwise leaves rows that make the next one fail
+ambiguously.
+
+**A second organisation exists for one test.** The RERA gate can only be observed by publishing
+into a jurisdiction you are not registered in, and the dev org holds valid Punjab and Chandigarh
+registrations. Haryana is deliberately unregistered — but `@tricity/geo` has no Panchkula
+localities, so no listing can be created there and the gate is unreachable from the form. Expiring
+a real registration for the duration of a test was the alternative, and a crashed run would then
+leave the agent silently unable to publish. So `e2e-gate-firm` holds an empty compliance record and
+the agent's own is never touched.
+
+**One worker, and it is not caution.** The throttler keys on client IP, and on a dev machine the
+site's server-side fetches, the admin's, the browser's images and the tests' own calls are all
+127.0.0.1. Three workers exhausted the 10/sec bucket, and a throttled fetch inside a Server
+Component does not throw — `apiGet` returns null and the page renders its empty state, so the test
+fails with "the listing did not reach the site", which is a false accusation. Same reason logins
+are saved as `storageState` rather than repeated: staff login is 10/minute and the suite was
+spending all of it.
+
+**Fields are located by `name`, not by label.** The `Field` wrapper puts the hint inside the label,
+so the price input's accessible name is the whole sentence about typing "1.45 cr". More to the
+point, `name` IS the contract — the Server Action reads `form.get("price")` — so renaming it should
+fail a test and rewording a hint should not.
+
+**Cards are matched by listing id, not title.** A buyer-facing card never shows the agent's
+internal title; it leads with photo, price, spec line and address. Searching for the title finds
+nothing and reads as "the listing is missing".
+
+**Buyers are matched by phone.** `LeadRepository` deduplicates an enquiry onto an existing contact
+by phone first, so a hardcoded number attaches the test's enquiry to whoever already owns it — and
+teardown, which keys on the e2e email domain, can then never find it. Numbers are randomised, and
+must be exactly ten digits or the API rejects them.
+
+Also worth knowing: Next renders a route announcer with `role="alert"`, so a bare
+`getByRole("alert")` always matches something in this app.
+
+---
+
+## 2026-08-30 — Steps 18-20: Demo inventory, CI, and three silent photo bugs
+
+Recorded after the fact — these three commits shipped without a log entry, and the commit messages
+carry the full reasoning.
+
+**Step 18 (`0e706e9`, `0a58f60`) — a real README and a CI workflow.** The boilerplate README was
+replaced, and `.github/workflows/ci.yml` now runs the migrations and the integration suite against
+a Postgres service container. There is still no git remote, so nothing has actually executed it.
+
+**Step 19 (`a34c8e0`) — ten demo listings.** Every title prefixed `[SAMPLE]` and every description
+says so: publishing invented inventory under a real RERA number would be an advertising offence, so
+if this data ever leaks somewhere public it should be obvious rather than plausible. The spread
+exercises the product rather than filling a page — plots and SCOs alongside flats, all three
+possession states, one under-offer, 42L to 4.2Cr so lakh/crore formatting shows at both ends.
+Photos are generated colour fields: no network dependency, no licensing question.
+
+Seeding it surfaced the first photo bug: the public catalog emitted `/media/{storage_key}`, which
+leaks the object's bucket key into a public response AND points at a route that serves nothing.
+Now `/api/media/{id}/card`, resolved under the caller's tenant context.
+
+**Step 20 (`adaae01`, `99f3298`) — photos were blank everywhere, four different ways.** All four
+were invisible to every command-line check, which is what motivated the browser suite in step 21.
+
+1. `next/image` refuses any host not in `images.remotePatterns` and returns
+   `400 "url" parameter is not allowed`. The page still renders — just with every photo blank.
+   The optimizer should never have been in this path: the API already emits 400/800/1600 WebP at
+   upload. Now a plain `<img>` with a real srcset, and `remotePatterns` is empty again.
+2. In the admin, a NEW listing is a draft, and the API's media delivery route is `@Public()` — so
+   the guard skips verification, `request.principal` is never populated, and the lookup runs as
+   ANONYMOUS. RLS then correctly refused a PENDING_REVIEW listing's media even with a valid staff
+   token attached. Fixed with a separate authenticated route rather than optional auth on the
+   public one.
+3. `helmet()` sets `Cross-Origin-Resource-Policy: same-origin` globally, which tells the BROWSER
+   to refuse to embed a :3001 response in a :3000 document. Invisible to curl, to fetch-in-node
+   and to the API's own tests, because CORP is enforced by the browser and not the server. Public
+   media now opts out; the staff route stays same-origin because those are session-scoped.
+4. Listing reads are cached 60s so crawler traffic does not turn every hit into a spatial query —
+   which meant an agent published a listing, looked at the site, and did not see it. Fetches are
+   now tagged and the admin calls a revalidate endpoint after every write, fire-and-forget with a
+   3s timeout. `revalidateTag` takes a profile in Next 16 and the recommended `"max"` is wrong
+   here: it serves stale content while revalidating, which is the exact behaviour being fixed.
+   `{ expire: 0 }` makes the next request blocking-fresh.
 
 ---
 

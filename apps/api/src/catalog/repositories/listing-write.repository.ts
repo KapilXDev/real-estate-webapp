@@ -120,6 +120,23 @@ export class ListingWriteRepository {
    * nullable columns. Fields where clearing is meaningful (`possession_date`, `close_price`)
    * therefore take an explicit sentinel below rather than relying on coalesce.
    */
+  /*
+   * ⚠️⚠️ EVERY `patch.status` PARAMETER BELOW IS CAST TO `::listing_status`, AND THE ONE IN
+   * `IS NOT NULL` IS WHY. DO NOT REMOVE THEM AS REDUNDANT.
+   *
+   * Postgres infers a parameter's type from the context it appears in, and `$n IS NOT NULL`
+   * supplies no context at all. The statement therefore failed to PARSE — `42P18: could not
+   * determine data type of parameter $17` — before touching a row and regardless of what was
+   * being updated. Every listing update was a 500. Not "sometimes": always.
+   *
+   * It survived because nothing reached it. The admin's own form validation rejected every edit
+   * before the request was sent (see the long note in `apps/admin/src/app/listings/actions.ts`),
+   * and no integration test covers `update()`. Two independent bugs, the first hiding the second,
+   * until a browser test changed a price and then looked at the public site.
+   *
+   * The comparisons are cast too, not just the `IS NOT NULL`: it costs nothing and it stops the
+   * next reader from tidying away the "unnecessary" ones and bringing this back.
+   */
   async update(listingId: string, patch: ListingPatch, context: TenantContext): Promise<boolean> {
     return this.database.withTenant(context, async (tx) => {
       const rows = await tx<{ id: string }[]>`
@@ -148,14 +165,15 @@ export class ListingWriteRepository {
           -- Closing timestamp is derived, never supplied: a status of SOLD/RENTED without a
           -- closed_at would break every trailing-90-day market statistic silently.
           closed_at =
-            CASE WHEN ${patch.status ?? null} IN ('SOLD', 'RENTED') AND closed_at IS NULL
+            CASE WHEN ${patch.status ?? null}::listing_status IN ('SOLD', 'RENTED')
+                      AND closed_at IS NULL
                  THEN now()
-                 WHEN ${patch.status ?? null} IS NOT NULL
-                      AND ${patch.status ?? null} NOT IN ('SOLD', 'RENTED')
+                 WHEN ${patch.status ?? null}::listing_status IS NOT NULL
+                      AND ${patch.status ?? null}::listing_status NOT IN ('SOLD', 'RENTED')
                  THEN NULL
                  ELSE closed_at END,
           published_at =
-            CASE WHEN ${patch.status ?? null} = 'ACTIVE' AND published_at IS NULL
+            CASE WHEN ${patch.status ?? null}::listing_status = 'ACTIVE' AND published_at IS NULL
                  THEN now()
                  ELSE published_at END,
           updated_at = now()
