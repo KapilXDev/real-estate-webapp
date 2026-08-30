@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      # ⚠️ postgis, not plain postgres — the schema uses geography columns and GiST indexes from
+      # migration 0001, so a stock postgres image fails on the very first migration.
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: tricity
+          POSTGRES_PASSWORD: tricity_dev_password
+          POSTGRES_DB: tricity
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tricity -d tricity"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The owner connection: migrations and DDL.
+      DATABASE_URL: postgresql://tricity:tricity_dev_password@localhost:5432/tricity
+      # ⚠️ The runtime role. The tests connect as THIS, deliberately — as the owner (a superuser
+      # in this image) they would pass against a schema with no working tenant isolation at all.
+      APP_DATABASE_URL: postgresql://tricity_app:tricity_app_ci_password@localhost:5432/tricity
+      JWT_ACCESS_SECRET: ci-only-access-secret-not-used-anywhere-real
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-not-used-anywhere-real
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Apply migrations
+        run: npm run db:migrate
+
+      - name: Create the least-privilege runtime role
+        # Migration 0019... 0013 creates tricity_app as NOLOGIN; this gives it the password from
+        # APP_DATABASE_URL. Without it every test fails to connect.
+        run: npm run db:app-role
+
+      - name: Typecheck
+        run: |
+          npx tsc --noEmit -p apps/api/tsconfig.spec.json
+          npx tsc --noEmit -p apps/web/tsconfig.json
+          npx tsc --noEmit -p apps/admin/tsconfig.json
+
+      - name: Test
+        run: npm test --workspace=@tricity/api
+
+      - name: Build
+        run: |
+          npm run build --workspace=@tricity/api
+          npm run build --workspace=@tricity/web
+          npm run build --workspace=@tricity/admin
+        env:
+          API_URL: http://localhost:3001/api
