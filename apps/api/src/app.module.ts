@@ -7,6 +7,7 @@ import { DatabaseModule } from "./database/database.module";
 import { HealthController } from "./health/health.controller";
 import { IdentityModule } from "./identity/identity.module";
 import { LeadsModule } from "./leads/leads.module";
+import { MediaModule } from "./media/media.module";
 
 /**
  * Root module.
@@ -33,6 +34,7 @@ import { LeadsModule } from "./leads/leads.module";
     IdentityModule,
     CatalogModule,
     LeadsModule,
+    MediaModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

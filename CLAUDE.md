@@ -113,9 +113,11 @@ figures, before launch.
   listings, about, contact, EMI/stamp-duty calculator, market reports, sitemap, robots, JSON-LD.
 - **Phase 2 — search/filters/saved-search/lead scoring done.** Remaining: user accounts +
   favourites, and actually *sending* alerts (needs an email/WhatsApp provider).
-- **Catalog + leads modules built.** The website serves REAL inventory from Postgres when
-  `LISTING_PROVIDER=api`; forms write leads to Postgres. 152 integration tests.
-  **Largest gaps now: no admin UI (inventory and leads are API-only) and no media upload.**
+- **Catalog, leads and media modules built.** The website serves REAL inventory from Postgres
+  when `LISTING_PROVIDER=api`; forms write leads to Postgres; photos upload, resize to WebP
+  variants and serve through an RLS-checked proxy. 158 integration tests.
+  **The one remaining gap is the admin UI** — every write path is API-only, so the agent cannot
+  add a listing or a photo without curl. A separate `apps/admin` app is planned.
   See `docs/FLOWS.md` for the full buyer/seller/agent journeys and what is missing.
 - **Backend — identity slice RUNNING against real Postgres.** `apps/api` serves helmet, CORS,
   zod-validated config, a global throttler, the JWT guard, health probes, and a full identity
@@ -207,6 +209,17 @@ Next, in order:
 - **`refresh_token` holds two kinds of principal** (`user_id` XOR `contact_id`, enforced by CHECK).
   Both auth services must reject a token of the wrong kind, or a consumer session could be
   upgraded to a staff one.
+- **⚠️ NEVER `${JSON.stringify(x)}::jsonb`. ALWAYS `jsonb(sql, x)`** from
+  `database/json-param.ts`. postgres.js JSON-encodes a *string* parameter bound to a json/jsonb
+  column, so a pre-stringified value is encoded TWICE and the column holds a JSON string —
+  `jsonb_typeof` returns `'string'`. Nothing errors; reads return a string where a structure is
+  expected, and a defensive `Array.isArray` check turns it into a plausible empty array. It
+  shipped across `listing.features`, `lead.requirement`, `lead.source` and
+  `listing_media.variants`, and made the `@>` features filter match nothing while looking fine.
+  Guarded by `test/jsonb-encoding.spec.ts`.
+- **Declare literal routes BEFORE parameter routes.** Nest matches in declaration order, so
+  `@Get(":a/:b")` above `@Get("listings/:id")` swallows the literal segment and fails as an opaque
+  driver error. Bitten twice now.
 - **⚠️ `apps/api` must `import type` from `@tricity/contracts` — NEVER a value import.** The app
   compiles to CommonJS, the workspace packages ship raw TypeScript, and Node cannot `require()` a
   `.ts` file. A value import passes `tsc` and then dies at boot with `ERR_MODULE_NOT_FOUND` on an

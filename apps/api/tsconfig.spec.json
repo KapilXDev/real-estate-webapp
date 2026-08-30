@@ -11,7 +11,10 @@
   "compilerOptions": {
     "noEmit": true,
     // vitest is imported explicitly in every spec (`globals: false`), so no ambient types needed.
-    "types": ["node"]
+    // "multer" must be repeated from the base config: an explicit `types` array REPLACES the
+    // inherited one rather than merging with it, so omitting it here drops the Express.Multer
+    // global augmentation and the upload controller stops compiling under this project only.
+    "types": ["node", "multer"]
   },
   "include": ["src/**/*", "test/**/*"]
 }

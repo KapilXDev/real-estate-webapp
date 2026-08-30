@@ -140,13 +140,20 @@ POST /api/staff/listings            ✅  create (org from the token, never the b
 PATCH /api/staff/listings/:id       ✅  price changes recorded to history automatically
 GET   /api/staff/listings           ✅  own inventory incl. drafts
 GET   /api/staff/leads              ✅  queue: tour requests first, then by score
+
+POST   /api/staff/listings/:id/media        ✅  upload a photo (multipart, resized on the way in)
+GET    /api/staff/listings/:id/media        ✅  incl. PENDING/FAILED rows and why they failed
+PUT    /api/staff/listings/:id/media/order  ✅  reorder — the first entry is the hero image
+DELETE /api/staff/listings/:id/media/:id    ✅
 ```
 
 **Everything is tenant-scoped by RLS**, not by remembering a `WHERE` clause. A partner brokerage
-cannot read another's inventory or leads — enforced by the database and covered by 152 tests.
+cannot read another's inventory, leads or photos — enforced by the database and covered by 158
+tests.
 
 ❌ **There is no admin UI.** All of the above is API-only, exercised with curl or a REST client.
-This is the largest remaining gap for day-to-day use.
+Photo upload included. **This is now the only thing standing between the backend and a usable
+product** — a separate `apps/admin` Next app is planned and approved.
 
 ---
 
@@ -191,8 +198,9 @@ Login is the exception: it cannot know your org before it finds you, so it goes 
 **Blocking a real launch:**
 
 1. ❌ **Admin UI** — inventory and leads are API-only today.
-2. ❌ **Media upload** — `listing_media` exists; there is no upload path, no S3/MinIO, no image
-   pipeline. Property photos are the single biggest conversion factor on a listing page.
+2. ✅ **Media upload — BUILT.** Multipart upload → sharp resize into thumb/card/hero WebP →
+   MinIO → served through an RLS-checked proxy. EXIF rotation applied, SVG rejected, decompression
+   bombs rejected, duplicates deduped by checksum.
 3. ⚠️ **Real agent details + RERA numbers** — placeholders. The launch guard now refuses to serve
    a public site until they are filled in.
 4. ⚠️ **Locality boundaries are generated circles**, off by 1-2 km and overlapping. Replace with
@@ -205,7 +213,7 @@ Login is the exception: it cannot know your org before it finds you, so it goes 
 |---|---|---|
 | WhatsApp Business API | Speed-to-lead; the dominant channel | ❌ |
 | Transactional email | Saved-search alerts, receipts | ❌ |
-| Object storage + image pipeline | Listing photos | ❌ |
+| Object storage + image pipeline | Listing photos | ✅ MinIO + sharp |
 | Redis | Throttler is in-memory → per-instance limits | ❌ |
 | Scheduler | Alerts, market reports, expiry sweeps | ❌ |
 | Error tracking | Currently `console.error` | ❌ |

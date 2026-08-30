@@ -19,7 +19,11 @@
     "strictPropertyInitialization": false,
     "resolveJsonModule": true,
     "types": [
-      "node"
+      "node",
+      // Multer ships its Express.Multer.File type as a global augmentation. With an explicit
+      // `types` array, @types packages are NOT auto-included, so the augmentation is invisible
+      // and `Express.Multer` fails to resolve in the upload controller.
+      "multer"
     ],
     "typeRoots": [
       "../../node_modules/@types",

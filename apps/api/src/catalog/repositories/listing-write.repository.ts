@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 
 import { DatabaseService, type TenantContext } from "../../database/database.service";
+import { jsonb } from "../../database/json-param";
 
 export interface ListingWriteInput {
   organizationId: string;
@@ -59,6 +60,16 @@ export class ListingWriteRepository {
    */
   async create(input: ListingWriteInput, context: TenantContext): Promise<string> {
     return this.database.withTenant(context, async (tx) => {
+      /*
+       * ⚠️ tx.json(...), NOT JSON.stringify(...)::jsonb.
+       *
+       * postgres.js JSON-encodes a string parameter bound to a json/jsonb column. Passing an
+       * already-stringified value therefore encodes it TWICE, and the column ends up holding a
+       * JSON *string* rather than an object or array — jsonb_typeof returns 'string'. Nothing
+       * errors: the write succeeds, and every read gets a string back where the code expects a
+       * structure. Defensive Array.isArray checks then quietly turn it into an empty array, so
+       * the data looks merely absent rather than corrupt. Shipped once here; see BUILD_LOG.
+       */
       const rows = await tx<{ id: string }[]>`
         INSERT INTO listing (
           organization_id, property_id, listed_by_user_id,
@@ -83,7 +94,7 @@ export class ListingWriteRepository {
           ${input.furnishing ?? null}::furnishing,
           ${input.title ?? null},
           ${input.description ?? null},
-          ${JSON.stringify(input.features ?? [])}::jsonb,
+          ${jsonb(tx, input.features ?? [])},
           -- listing_active_has_published_at forbids an ACTIVE listing with a null published_at.
           -- Set here rather than by the caller so the constraint can never be tripped by a write
           -- path that forgot about it.
@@ -128,7 +139,7 @@ export class ListingWriteRepository {
           furnishing   = coalesce(${patch.furnishing ?? null}::furnishing, furnishing),
           title        = coalesce(${patch.title ?? null}, title),
           description  = coalesce(${patch.description ?? null}, description),
-          features     = coalesce(${patch.features ? JSON.stringify(patch.features) : null}::jsonb, features),
+          features     = coalesce(${patch.features ? jsonb(tx, patch.features) : null}, features),
           close_price  =
             CASE WHEN ${patch.closePrice !== undefined}
                  THEN ${patch.closePrice ?? null}

@@ -63,6 +63,21 @@ const schema = z.object({
   OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
 
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
+
+  /* --- Object storage (listing photos) ------------------------------------------------ */
+
+  /**
+   * ⚠️ Set for MinIO / R2 / Spaces; LEAVE UNSET for real AWS S3.
+   *
+   * When present the client also switches to path-style URLs, which MinIO requires — the SDK
+   * default of `https://bucket.host/key` needs wildcard DNS and fails against localhost with a
+   * connection error that looks like the server is down rather than like a URL-style mismatch.
+   */
+  MEDIA_ENDPOINT: z.string().optional(),
+  MEDIA_REGION: z.string().default("us-east-1"),
+  MEDIA_BUCKET: z.string().default("tricity-media"),
+  MEDIA_ACCESS_KEY: z.string().default("tricity"),
+  MEDIA_SECRET_KEY: z.string().default("tricity_dev_password"),
 });
 
 export type AppConfig = z.infer<typeof schema> & {

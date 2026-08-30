@@ -1,10 +1,9 @@
 # Local development stack.
 #
-# Deliberately starting with Postgres ONLY. MinIO and Redpanda are defined below but commented
-# out — there is no point running them while the schema is still settling, and fewer containers
-# means a faster, lighter dev loop. Uncomment each as the feature that needs it lands:
-#   minio    -> when media upload is implemented
-#   redpanda -> when the first real event fan-out exists (saved-search matching)
+# Postgres + MinIO. Redpanda stays commented out until there is a real event fan-out to justify
+# it (saved-search matching) — fewer containers means a faster dev loop.
+#   minio    -> ENABLED: listing photos (see apps/api/src/media)
+#   redpanda -> when the first real event fan-out exists
 
 services:
   postgres:
@@ -30,16 +29,29 @@ services:
       timeout: 5s
       retries: 10
 
-  # --- Enable when media upload lands -------------------------------------------------
-  # minio:
-  #   image: minio/minio:latest
-  #   container_name: tricity-minio
-  #   command: server /data --console-address ":9001"
-  #   environment:
-  #     MINIO_ROOT_USER: tricity
-  #     MINIO_ROOT_PASSWORD: tricity_dev_password
-  #   ports: ["9000:9000", "9001:9001"]
-  #   volumes: [minio_data:/data]
+  # --- Object storage for listing photos ----------------------------------------------
+  # S3-compatible, so the same @aws-sdk/client-s3 code runs unchanged against AWS S3,
+  # Cloudflare R2 or DigitalOcean Spaces in production — only the endpoint changes.
+  minio:
+    image: minio/minio:latest
+    container_name: tricity-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: tricity
+      MINIO_ROOT_PASSWORD: tricity_dev_password
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      # The API creates the bucket on boot, so it must wait for a live server rather than
+      # a started container.
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   # --- Enable when the first event fan-out lands --------------------------------------
   # redpanda:
@@ -56,5 +68,5 @@ services:
 
 volumes:
   postgres_data:
-  # minio_data:
+  minio_data:
   # redpanda_data:

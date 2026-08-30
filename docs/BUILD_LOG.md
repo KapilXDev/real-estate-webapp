@@ -9,34 +9,42 @@ without re-exploring. Newest entry at the top.
 
 ## NEXT UP — resume point for a fresh session
 
-**The website now runs on real inventory from Postgres.** Catalog + leads modules built and
-layered, 152 integration tests green. **Read `docs/FLOWS.md`** for the buyer / seller / agent
-journeys and exactly what is missing.
+**Backend is feature-complete for launch; the missing piece is the ADMIN UI.** Catalog, leads and
+media all work, the public site runs on real Postgres inventory, and 158 integration tests guard
+it. But every write path is API-only — the agent cannot add a listing or a photo without curl.
+
+**Read `docs/FLOWS.md`** for the buyer / seller / agent journeys and what is missing.
 
 **Standing facts (do NOT re-diagnose):**
-- 17 migrations applied, seed loaded, PostGIS 3.4. Container `tricity-postgres`.
+- 18 migrations applied, seed loaded, PostGIS 3.4. Containers `tricity-postgres`, `tricity-minio`.
 - **TWO database roles.** `DATABASE_URL` = `tricity` (owner, superuser locally, DDL only).
   `APP_DATABASE_URL` = `tricity_app` (serves requests). A superuser ignores RLS — see Step 14.
 - **`apps/api` must `import type` from `@tricity/contracts`, never a value import** — a CommonJS
   app cannot `require()` raw TypeScript. See Step 15.
+- **Never `${JSON.stringify(x)}::jsonb`. Always `jsonb(sql, x)`** from `database/json-param.ts` —
+  postgres.js double-encodes the first form and it fails silently. See Step 16.
 - Dev staff login: `owner@tricityestate.test` / `dev-owner-password-123`, org `tricity-estate`
-  (flagged `is_host`, holds a Punjab RERA registration).
-- `LISTING_PROVIDER=mock` by default. `api` serves real DB inventory and flips `isLiveData` true,
-  which un-suppresses RERA attribution and allows indexing — do not set it over demo data.
+  (flagged `is_host`, holds a Punjab RERA registration only — Chandigarh is deliberately absent so
+  the publication gate can be exercised).
+- `LISTING_PROVIDER=mock` by default. `api` serves real DB inventory and flips `isLiveData` true.
 
-**Next, in order:**
+**Next: the admin app.** An approved plan exists — see the plan file referenced in Step 16, or
+rebuild it from here. Decisions already taken: a **separate `apps/admin` Next app** (port 3002),
+**httpOnly cookie BFF** so the browser never holds a JWT, full scope (listings CRUD, photos,
+leads, RERA management).
 
-1. **Admin UI — the largest gap.** Inventory and leads are API-only, so the agent cannot actually
-   use this. Needs listing create/edit, the lead queue, and RERA registration management (there is
-   no endpoint for that last one at all — the smoke test inserts it with psql).
-2. **Media upload.** `listing_media` exists with no upload path. Needs MinIO/S3 (already stubbed in
-   `infra/docker/docker-compose.yml`) plus an image pipeline. Photos are the single biggest
-   conversion factor on a listing page.
-3. **Identity `repositories/` extraction** — the one module not on the full layered pattern. Port
-   the throwaway identity smoke script into the test harness FIRST, so the refactor has a net.
-4. **Speed-to-lead auto-WhatsApp** — highest-ROI remaining feature. Needs a WhatsApp Business API
-   account and opt-in language. TODO marker is in `leads/services/lead.service.ts`.
-5. **ESLint 9 flat config for `apps/api`** — still none, so `npm run lint` skips the workspace.
+1. **Shared foundations first.** `@tricity/contracts` is missing from `transpilePackages`,
+   tsconfig `paths` AND `package.json` in `apps/web` — it resolves on workspace-symlink luck
+   today. Fix before a second app depends on it. Then extract the Tailwind `@theme` block from
+   `apps/web/src/app/globals.css` into `packages/config/theme.css` (that package is an empty stub).
+2. **Three missing API endpoints:** `GET /staff/listings/:id` (the edit form needs the full
+   record; `findForOrg` returns a summary), `GET/PUT /staff/rera` (the repository methods exist,
+   there is no controller at all), `PATCH /staff/leads/:id` (status transitions).
+3. **⚠️ The refresh race is the thing to get right.** Refresh tokens rotate and presenting a used
+   one revokes the whole family. Parallel server-side fetches will refresh concurrently and log
+   the user out of every session. Refresh must be single-flight.
+4. Then the screens. Price input MUST go through `parsePriceInput` ("85 lakh" → 8500000); area
+   input must capture value + unit + **basis** together.
 
 **Known-good commands:**
 ```
@@ -44,7 +52,7 @@ npm run db:up && npm run db:migrate && npm run db:app-role && npm run db:seed
 npm run db:bootstrap -- --email you@example.com --name "You" --org "Firm"
 npm run api:dev                        # http://localhost:3001/api
 npm run web:dev                        # http://localhost:3000
-npm test --workspace=@tricity/api      # 152 tests, ~2s
+npm test --workspace=@tricity/api      # 158 tests, ~2s
 ```
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
@@ -54,6 +62,120 @@ npm test --workspace=@tricity/api      # 152 tests, ~2s
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-30 — Step 16: Listing photos, and a silent data-corruption bug found on the way
+
+**Agents can now upload property photos.** Upload → resize → object storage → serve, with the
+delivery path behind RLS. 37/37 media checks, 158 integration tests.
+
+## The pipeline
+
+`POST /api/staff/listings/:id/media` takes multipart, and the request does everything
+synchronously: decode, resize into three WebP variants, write to MinIO, mark the row READY.
+
+**⚠️ SYNCHRONOUS IS A DELIBERATE TRADE, not an oversight.** Presigned direct-to-storage upload
+plus an async processing queue never blocks Node and is the right answer at volume — but it needs
+bucket CORS, a job runner, and a UI that can render "still processing". At the actual scale here
+(an agent uploading 10-20 phone photos, watching, wanting to know it worked) each takes a few
+hundred milliseconds. The migration path is left open on purpose: `listing_media` already carries
+PENDING/PROCESSING/FAILED and an `error_detail` column, so moving processing out of the request
+later touches `MediaService` and nothing else.
+
+**Why resize at all:** agents upload straight from a phone camera roll — 4-8 MB, 4032px wide.
+Serving that as a listing hero destroys the LCP < 2.5s target on the mobile connections these
+buyers are on, and the listing page is where the decision to call gets made. Measured in the smoke
+test: a 4032×3024 source came out as a 1600px WebP hero at **~4% of the original bytes**.
+
+Three variants — `thumb` 400w, `card` 800w, `hero` 1600w — plus the original, kept so the variant
+set can change later (adding AVIF, a retina hero) without asking agents to re-upload. Throwing the
+original away is a one-way door.
+
+## Things that would have been bugs
+
+- **EXIF rotation.** `sharp().rotate()` with no argument applies the orientation tag and strips
+  it. Without it every portrait phone photo renders sideways — the pixels really are stored
+  landscape and only the tag says otherwise, and resizing discards metadata. The single most
+  visible bug in any naive image pipeline. Covered by a test that uploads orientation-6 landscape
+  pixels and asserts the output is portrait.
+- **Format is determined by DECODING THE BYTES**, never from the filename or the client's
+  Content-Type — both are attacker-controlled. **SVG is deliberately absent from the accepted
+  formats** despite being an image format: it is a document format that executes, and
+  `photo.jpg` containing `<svg><script>` served back with an image content type is stored XSS.
+  Tested.
+- **Decompression bombs.** A 436KB PNG can declare 12000×12000 and allocate gigabytes on decode.
+  The byte-size limit does not catch this at all, because the *compressed* file is small. Guarded
+  on declared megapixels before any pixels are decoded. Tested.
+- **Keys contain no user-supplied text.** Not the filename, not the caption — a filename arrives
+  from a browser with whatever the OS allowed, including `../`, and a key is a path. Both segments
+  are server-generated uuids. The listing id leads the key so a listing's objects can be swept by
+  prefix.
+- **Dedup by SHA-256 of the original.** Agents re-upload the same photo constantly — camera roll,
+  WhatsApp forward, a listing they copied. Identical bytes return the existing row instead of a
+  duplicate gallery entry and a redundant resize.
+
+## RLS on `listing_media` (0018)
+
+The table **was not under RLS at all**, which only escaped notice because nothing had ever written
+a row. Media rows now carry object keys, and for a PRIVATE or DRAFT listing a storage key is
+effectively the file's address. Without a policy any org could enumerate every rival's photo keys.
+
+The policy delegates to the parent listing via `can_view_listing` rather than restating tier
+logic — media inherits the visibility of the thing it depicts, and duplicating those rules would
+be a second place to get them wrong. Delivery is a **proxy, not a redirect to a bucket URL**, for
+exactly this reason: `streamVariant` resolves the row under the caller's tenant context first.
+
+## 🔴 The real find: jsonb was being double-encoded, silently
+
+`${JSON.stringify(value)}::jsonb` looks obviously correct and is obviously wrong.
+
+**postgres.js JSON-encodes a string parameter bound to a json/jsonb column.** A pre-stringified
+value is therefore encoded twice, and the column holds a JSON **string** rather than an object or
+array — `jsonb_typeof` returns `'string'`.
+
+Nothing fails. The INSERT succeeds, the read returns a string, and the listing mapper's defensive
+`Array.isArray(raw) ? ... : []` — written to survive a hand-edited row — converted the corruption
+into a plausible empty array. So `listing.features` looked merely *absent*.
+
+The part that would have hurt: the public search filters features with `@>` containment. Against a
+double-encoded column that matches nothing, so the filter appeared to work while silently
+excluding every listing.
+
+Affected **`listing.features`, `lead.requirement`, `lead.source` and `listing_media.variants`** —
+i.e. it had already shipped in two modules. Fixed by `database/json-param.ts`; the rule is now
+**always `jsonb(sql, value)`, never `JSON.stringify(...)::jsonb`**.
+
+`test/jsonb-encoding.spec.ts` guards it, and asserts on **`jsonb_typeof`, not on round-tripped JS
+values** — that distinction is the whole point, because a double-encoded column round-trips
+through `JSON.parse` perfectly and looks fine from the application side. It also keeps the broken
+idiom as an executable counter-example, so anyone tempted to "simplify" back can see the result
+rather than take it on trust.
+
+## Also fixed
+
+- **Route ordering.** `@Get(":mediaId/:variant")` was declared before `@Get("listings/:listingId")`,
+  so `/media/listings/{uuid}` bound `mediaId="listings"` and never reached the literal segment. It
+  surfaced as `invalid input syntax for type uuid` deep in the driver, pointing at the repository
+  rather than the routing table. Exactly the trap called out in `PublicCatalogController` — written
+  down, then walked into anyway. Caught by the smoke test.
+- **`@types/multer` needs `"multer"` in the tsconfig `types` array.** With an explicit `types`
+  list, @types packages are not auto-included, so the `Express.Multer.File` global augmentation is
+  invisible. And it must be repeated in `tsconfig.spec.json` — an explicit `types` array REPLACES
+  the inherited one rather than merging.
+
+## Verified
+
+- 37/37 media smoke checks against the live API.
+- 158/158 integration tests (152 + 6 new jsonb guards).
+- Bucket auto-created on boot. `ObjectStorageService` deliberately does **not** throw when storage
+  is unreachable — unlike the RLS role check, which must refuse to serve traffic. Photos being
+  down should not take search and lead capture down with them.
+
+## Still not built
+
+**The admin UI.** Everything above is API-only; the agent still cannot upload a photo without
+curl. That is the next step, and it is now the only thing between this and a usable product.
 
 ---
 

@@ -3,6 +3,7 @@ import type postgres from "postgres";
 import type { ListingSearchParamsDto } from "@tricity/contracts";
 
 import { ANONYMOUS, DatabaseService, type TenantContext } from "../../database/database.service";
+import { jsonb } from "../../database/json-param";
 import type { CountedRow, ListingMediaRow, ListingRow, MarketStatsRow } from "../dao/listing.row";
 import {
   FURNISHING_TO_DB,
@@ -205,10 +206,16 @@ export class ListingRepository {
     }
 
     if (params.features?.length) {
-      // `@>` containment: the listing must have ALL requested features, matching the UI's
-      // "must have" chips. Any-of would make each extra chip widen the results, which is the
-      // opposite of what a filter appears to promise.
-      f.push(sql`l.features @> ${JSON.stringify(params.features)}::jsonb`);
+      /*
+       * `@>` containment: the listing must have ALL requested features, matching the UI's
+       * "must have" chips. Any-of would make each extra chip widen the results, which is the
+       * opposite of what a filter appears to promise.
+       *
+       * ⚠️ sql.json(), not JSON.stringify(). A pre-stringified value is JSON-encoded a second
+       * time by the driver, so the comparison is against a JSON *string* rather than an array
+       * and `@>` never matches — the filter silently returns nothing instead of erroring.
+       */
+      f.push(sql`l.features @> ${jsonb(sql, params.features)}`);
     }
 
     if (params.bounds) {

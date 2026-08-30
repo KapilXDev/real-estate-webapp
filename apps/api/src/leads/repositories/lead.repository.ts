@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 
 import { DatabaseService, type TenantContext } from "../../database/database.service";
+import { jsonb } from "../../database/json-param";
 import type { LeadRow } from "../dao/lead.row";
 
 export interface LeadWriteInput {
@@ -91,6 +92,16 @@ export class LeadRepository {
 
   async create(input: LeadWriteInput, context: TenantContext): Promise<string> {
     return this.database.withTenant(context, async (tx) => {
+      /*
+       * ⚠️ tx.json(...), NOT JSON.stringify(...)::jsonb.
+       *
+       * postgres.js JSON-encodes a string parameter bound to a json/jsonb column. Passing an
+       * already-stringified value therefore encodes it TWICE, and the column ends up holding a
+       * JSON *string* rather than an object or array — jsonb_typeof returns 'string'. Nothing
+       * errors: the write succeeds, and every read gets a string back where the code expects a
+       * structure. Defensive Array.isArray checks then quietly turn it into an empty array, so
+       * the data looks merely absent rather than corrupt. Shipped once here; see BUILD_LOG.
+       */
       const rows = await tx<{ id: string }[]>`
         INSERT INTO lead (
           organization_id, contact_id, listing_id, kind, channel, status, score,
@@ -104,8 +115,8 @@ export class LeadRepository {
           'NEW',
           ${input.score},
           ${input.message ?? null},
-          ${input.requirement ? JSON.stringify(input.requirement) : null}::jsonb,
-          ${input.source ? JSON.stringify(input.source) : null}::jsonb
+          ${input.requirement ? jsonb(tx, input.requirement) : null},
+          ${input.source ? jsonb(tx, input.source) : null}
         )
         RETURNING id
       `;
