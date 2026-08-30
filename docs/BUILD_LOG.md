@@ -9,39 +9,42 @@ without re-exploring. Newest entry at the top.
 
 ## NEXT UP — resume point for a fresh session
 
-**Backend is real and now defended by tests.** 14 migrations applied, seed loaded, identity
-verified end to end, and 132 integration tests covering tenant isolation. Nothing below is
-speculative.
+**The website now runs on real inventory from Postgres.** Catalog + leads modules built and
+layered, 152 integration tests green. **Read `docs/FLOWS.md`** for the buyer / seller / agent
+journeys and exactly what is missing.
 
-**Standing environment facts (do NOT re-diagnose):**
-- `docker version` responds. Container `tricity-postgres`, image `postgis/postgis:16-3.4`.
-- **TWO database roles, not interchangeable.** `DATABASE_URL` = `tricity` (owner, superuser
-  locally, DDL only). `APP_DATABASE_URL` = `tricity_app` (what serves requests). A superuser
-  ignores RLS entirely — see Step 14. The API refuses to boot if it connects as a privileged role.
-- Dev staff login: `owner@tricityestate.test` / `dev-owner-password-123`, org `tricity-estate`.
+**Standing facts (do NOT re-diagnose):**
+- 17 migrations applied, seed loaded, PostGIS 3.4. Container `tricity-postgres`.
+- **TWO database roles.** `DATABASE_URL` = `tricity` (owner, superuser locally, DDL only).
+  `APP_DATABASE_URL` = `tricity_app` (serves requests). A superuser ignores RLS — see Step 14.
+- **`apps/api` must `import type` from `@tricity/contracts`, never a value import** — a CommonJS
+  app cannot `require()` raw TypeScript. See Step 15.
+- Dev staff login: `owner@tricityestate.test` / `dev-owner-password-123`, org `tricity-estate`
+  (flagged `is_host`, holds a Punjab RERA registration).
+- `LISTING_PROVIDER=mock` by default. `api` serves real DB inventory and flips `isLiveData` true,
+  which un-suppresses RERA attribution and allows indexing — do not set it over demo data.
 
 **Next, in order:**
 
-1. **Catalog module** — property + listing CRUD for staff, public search for the site. The RLS
-   groundwork is done and tested, so this is now ordinary work. Use `withTenant()` for everything;
-   the listing SELECT policy already resolves partner tiers.
-2. **Identity tests.** The 28-check smoke script lives only in a scratch directory and dies with
-   the session. Port it to `test/identity.spec.ts` against the harness — especially refresh
-   rotation / reuse detection and the principal-kind separation, which are currently unguarded.
-3. **`ApiProvider` in `apps/web`** to replace `MockProvider`, behind the existing
-   `LISTING_PROVIDER` seam.
-4. **ESLint 9 flat config for `apps/api`** — there is none, so `npm run lint` cannot cover this
-   workspace at all.
+1. **Admin UI — the largest gap.** Inventory and leads are API-only, so the agent cannot actually
+   use this. Needs listing create/edit, the lead queue, and RERA registration management (there is
+   no endpoint for that last one at all — the smoke test inserts it with psql).
+2. **Media upload.** `listing_media` exists with no upload path. Needs MinIO/S3 (already stubbed in
+   `infra/docker/docker-compose.yml`) plus an image pipeline. Photos are the single biggest
+   conversion factor on a listing page.
+3. **Identity `repositories/` extraction** — the one module not on the full layered pattern. Port
+   the throwaway identity smoke script into the test harness FIRST, so the refactor has a net.
+4. **Speed-to-lead auto-WhatsApp** — highest-ROI remaining feature. Needs a WhatsApp Business API
+   account and opt-in language. TODO marker is in `leads/services/lead.service.ts`.
+5. **ESLint 9 flat config for `apps/api`** — still none, so `npm run lint` skips the workspace.
 
 **Known-good commands:**
 ```
-npm run db:up          # PostGIS container
-npm run db:migrate     # idempotent, checksum-verified
-npm run db:app-role    # runtime role password; run after any new migration that adds tables
-npm run db:seed        # idempotent
+npm run db:up && npm run db:migrate && npm run db:app-role && npm run db:seed
 npm run db:bootstrap -- --email you@example.com --name "You" --org "Firm"
-npm run api:dev        # http://localhost:3001/api
-npm test --workspace=@tricity/api     # 132 integration tests, ~2s
+npm run api:dev                        # http://localhost:3001/api
+npm run web:dev                        # http://localhost:3000
+npm test --workspace=@tricity/api      # 152 tests, ~2s
 ```
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
@@ -51,6 +54,144 @@ npm test --workspace=@tricity/api     # 132 integration tests, ~2s
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-29 — Step 15: Catalog + leads modules, ApiProvider, and the three launch blockers closed
+
+**The two halves are now one product.** The website reads real inventory from Postgres, forms write
+leads to Postgres, and the layered module structure is in place.
+
+## Layered module structure
+
+`catalog/` and `leads/` are the reference implementation of the convention:
+
+```
+<module>/
+  controllers/   HTTP only — parse, delegate, map null to 404. No decisions.
+  services/      business rules: the RERA gate, sample-size thresholds, clamps
+  repositories/  the ONLY place SQL is written; every method goes through withTenant()
+  mappers/       row -> wire. Pure, synchronous, testable with a literal object
+  dao/           row shapes — hand-written assertions the compiler cannot verify, isolated
+  dto/           inbound validation at the edge
+  utils/         pure helpers: enum translation, SQL fragment composition
+```
+
+The point is that the tenant rule becomes **greppable**: SQL outside `repositories/` is wrong, and a
+repository method without `withTenant` is wrong. "Be careful" does not scale; a directory does.
+
+`identity/` was restructured to match (controllers/, services/, guards/, dto/, utils/) and its
+two-controller file split in two.
+
+⚠️ **One deliberate deviation:** identity has no `repositories/` yet — its services still hold their
+own SQL. Refresh rotation and reuse detection are subtle and covered only by a throwaway smoke
+script, so extracting them is a real refactor rather than a file move. Queued, not bundled into a
+structural change.
+
+## Three migrations, each closing a gap found by writing the mapper
+
+- **`0015_catalog_gaps`** — `possession` (**the most-used filter in this market**, ahead of price
+  band, and it did not exist at all), `reference_code` via a sequence DEFAULT, `price_on_request`,
+  `close_price`/`closed_at`, `pincode`, `project_id`, `lead.kind`.
+
+  Also **`area_input_basis`**: the schema recorded *that* the seller typed "10 marla" but not
+  **which** area it referred to. Without it the UI cannot tell whether to echo that beside the plot
+  area or the carpet area — and echoing it against the wrong one is a false statement about the
+  property, not a formatting quirk.
+
+- **`0016_rera_registrations`** — 🔴 **an organisation could hold only ONE RERA registration.**
+  The tricity is three jurisdictions inside 20 km (Punjab RERA; Chandigarh, a UT with its own
+  authority; Haryana for Panchkula) and an agent working across it holds a separate registration
+  for each. Showing the Punjab number on a Chandigarh listing is advertising that property without
+  a valid registration for the authority that governs it — the ₹10 lakh failure, not a display bug.
+
+  Now one row per (org, state), resolved per listing by joining on the **city's** state. Read is
+  world-open on purpose: a RERA number is *mandated public disclosure*, and hiding it behind tenant
+  scoping would break the one page it is legally required to appear on. Writes stay tenant-scoped.
+
+  Also `organization.is_host` with a partial unique index — at most one host.
+
+- **`0017_public_sold_history`** — the public catalog admitted only PUBLIC+ACTIVE, so
+  `getOwnListings({ includeSold })` was asking for rows no anonymous visitor could read. Widened to
+  UNDER_OFFER for everyone, and SOLD/RENTED **for the host organisation only** — a partner's
+  `close_price` is not ours to publish to their rivals.
+
+  ⚠️ Fourth revision of `can_view_listing`. SECURITY DEFINER, the pinned search_path and the 0014
+  coalesce are all restated in full, because CREATE OR REPLACE resets function attributes.
+
+## The RERA publication gate
+
+`ListingAdminService.assertPublishable()` blocks a listing going ACTIVE unless the organisation
+holds a **valid, unexpired** registration for **that listing's own jurisdiction**. Drafts are always
+allowed — an agent waiting on their Chandigarh registration should still be able to prepare
+inventory, and blocking the draft pushes them to enter it somewhere else instead. An expired
+registration counts as none: an expired number in an advertisement is a false claim of
+registration, worse than having none because it looks verified until someone checks.
+
+Verified live: publishing in Mohali with no registration → 403 naming Punjab; add the Punjab
+registration → 201; the same listing in Chandigarh → still 403 naming Chandigarh.
+
+## The three launch blockers, closed
+
+1. **Leads were being lost.** `FileLeadStore` appended to `.data/leads.jsonl` on local disk —
+   silent data loss on Vercel or any rescheduled container: the write succeeds, the form says
+   "thank you", and the record is gone at the next deploy. Now `ApiLeadStore` → Postgres, and
+   `getLeadStore()` **throws in production** when `API_URL` is unset rather than falling back to
+   the file. Crashing on boot is recoverable in minutes; silently dropping leads is not
+   recoverable at all.
+
+2. **The site would have published invented inventory.** `ApiProvider` is built. The factory now
+   accepts `api`/`mock` and **hard-fails on any other value** — a typo like `LISTING_PROVIDER=API`
+   silently serving fabricated listings on a site presenting itself as real is a RERA advertising
+   problem, not a config annoyance.
+
+3. **Placeholder agent details.** `config/launch-check.ts` refuses to serve a public site while
+   `"Your Name"` / `"PBRERA-XXXXXX-XXXX"` remain. Gated on `NEXT_PUBLIC_SITE_URL` rather than
+   NODE_ENV, so previews and CI still build — blocking those would make the check something people
+   route around. Verified: `NEXT_PUBLIC_SITE_URL=... next build` fails and names all three
+   jurisdictions separately.
+
+## 🔴 Bugs found while building
+
+- **`packages/contracts` had `"type": "module"`** — the exact trap CLAUDE.md warns about, latent
+  because nothing had ever imported it. Removed.
+
+- **A CommonJS app cannot import raw-TS workspace packages at runtime.** `apps/api` compiles to
+  `require()`, the packages ship `.ts`, and Node cannot require TypeScript — so any *value* import
+  from `@tricity/contracts` passes `tsc` and then dies at boot with `ERR_MODULE_NOT_FOUND` on an
+  extensionless specifier. The rule for `apps/api` is now **`import type` only**, with the one
+  runtime helper duplicated locally and `catalog-contract.spec.ts` round-tripping the real encoder
+  through the real DTO so the two cannot silently drift.
+
+- **`forbidNonWhitelisted` rejected the documented `?area=` parameter** because the DTO property was
+  named `localities`. Every locality-filtered search 400'd with "property area should not exist",
+  which reads like a validator bug rather than a naming mismatch. DTO properties must match wire
+  keys.
+
+- **`search()` read a `total_count` the projection never selected** — caught before it shipped.
+
+- **`reflect-metadata` is not loaded in vitest**, so any suite importing a DTO died with
+  `Reflect.getMetadata is not a function` pointing at a decorator. Added as a setup file.
+
+## Verified end to end
+
+- **152/152 integration tests** (was 132): +14 contract round-trip, +6 host-only sold history.
+- **40/40 catalog smoke checks** against the live API: the RERA gate in both directions, drafts
+  excluded from public results, rupees not lakh, `TE-` reference codes, marla echoed on the plot
+  area and *not* on the carpet area, coordinates not transposed, `area=mohali/phase-7` matching
+  while `area=chandigarh/phase-7` correctly does not, map bounds, leads persisting and ranking.
+- **The website served real Postgres inventory** with `LISTING_PROVIDER=api`: `/listings` and
+  `/search` rendered the seeded kothi as **₹1.45 Cr** with the real `PBRERA-SAS81-AG-0042`.
+- **A lead submitted through the website reached Postgres** — scored 70, phone normalised to
+  `+919876500099`.
+- `npm run build` clean for both apps; API and web typecheck clean.
+
+## Still not built
+
+**No admin UI** — inventory and leads are API-only, so the agent cannot use this day to day.
+**No media upload** — `listing_media` exists but there is no upload path or object storage, and
+photos are the biggest conversion factor on a listing page. Both are now the largest gaps.
+See `docs/FLOWS.md` for the full picture.
 
 ---
 

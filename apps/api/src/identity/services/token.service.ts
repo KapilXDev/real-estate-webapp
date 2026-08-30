@@ -3,9 +3,9 @@ import { JwtService } from "@nestjs/jwt";
 import type { SignOptions } from "jsonwebtoken";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
-import { APP_CONFIG, type AppConfig } from "../config/configuration";
-import { DatabaseService } from "../database/database.service";
-import type { UserRole } from "../database/schema/enums";
+import { APP_CONFIG, type AppConfig } from "../../config/configuration";
+import { DatabaseService } from "../../database/database.service";
+import type { UserRole } from "../../database/schema/enums";
 
 /**
  * Access-token claims.

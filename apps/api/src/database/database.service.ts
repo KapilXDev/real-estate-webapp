@@ -11,8 +11,16 @@ import { createDbClient, type Database, type DbClient, type RawSql } from "./cli
  * and for the pre-authentication paths, where the org is not yet known.
  */
 export interface TenantContext {
-  organizationId: string | null;
-  isPlatformAdmin: boolean;
+  organizationId?: string | null;
+  /**
+   * ⚠️ Optional, and it defaults to FALSE — never to true.
+   *
+   * `withTenant` coerces an absent value to "false", so a caller that omits this gets the
+   * least-privileged context rather than the most. Making the field required looked safer but
+   * pushed every ordinary call site to write `isPlatformAdmin: false` by rote, which is exactly
+   * the kind of boilerplate that gets copy-pasted as `true` once and never noticed.
+   */
+  isPlatformAdmin?: boolean;
 }
 
 /** Anonymous browsing: no org, no admin. The public listing policy still applies. */

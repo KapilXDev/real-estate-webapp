@@ -1,8 +1,8 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
 
-import { APP_CONFIG, type AppConfig } from "../config/configuration";
-import { DatabaseService } from "../database/database.service";
+import { APP_CONFIG, type AppConfig } from "../../config/configuration";
+import { DatabaseService } from "../../database/database.service";
 
 /**
  * One-time passcodes for phone login.

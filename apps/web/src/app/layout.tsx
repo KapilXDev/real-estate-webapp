@@ -3,6 +3,7 @@ import { Fraunces, Inter } from "next/font/google";
 
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import { SiteHeader } from "@/components/layout/SiteHeader";
+import { assertReadyForLaunch } from "@/config/launch-check";
 import { site } from "@/config/site";
 import "./globals.css";
 
@@ -48,6 +49,14 @@ export const metadata: Metadata = {
     follow: Boolean(process.env.NEXT_PUBLIC_SITE_URL),
   },
 };
+
+/*
+ * ⚠️ Runs on every render of every page, because there is no route that does not go through the
+ * root layout — which is exactly why the check lives here rather than in a build script someone
+ * can forget to run. It returns immediately unless NEXT_PUBLIC_SITE_URL is set, so it costs
+ * nothing until the site is actually being served to the public.
+ */
+assertReadyForLaunch();
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (

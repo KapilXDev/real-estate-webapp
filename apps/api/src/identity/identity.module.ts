@@ -1,37 +1,52 @@
 import { Module } from "@nestjs/common";
 import { JwtModule } from "@nestjs/jwt";
 
-import { ContactAuthController, StaffAuthController } from "./auth.controller";
-import { ContactAuthService } from "./contact-auth.service";
-import { JwtAuthGuard } from "./jwt-auth.guard";
-import { OtpService } from "./otp.service";
-import { PasswordService } from "./password.service";
-import { StaffAuthService } from "./staff-auth.service";
-import { TokenService } from "./token.service";
+import { ContactAuthController } from "./controllers/contact-auth.controller";
+import { StaffAuthController } from "./controllers/staff-auth.controller";
+import { JwtAuthGuard } from "./guards/jwt-auth.guard";
+import { ContactAuthService } from "./services/contact-auth.service";
+import { OtpService } from "./services/otp.service";
+import { PasswordService } from "./services/password.service";
+import { StaffAuthService } from "./services/staff-auth.service";
+import { TokenService } from "./services/token.service";
 
 /**
- * Identity module — the first vertical slice.
+ * Identity — staff credentials, consumer phone-OTP sessions, and token issuance.
  *
- * JwtModule is registered without a global secret on purpose: access and refresh concerns use
- * different secrets, and both are passed explicitly at sign/verify time in TokenService. A module
- * default would be the one that silently gets used if a call site forgets, which is exactly the
- * mistake worth making impossible.
+ * LAYOUT (the convention every module in this app follows):
+ *   controllers/  HTTP shape only — parse, delegate, translate a domain result into a status code
+ *   services/     decisions and orchestration; the only layer that knows business rules
+ *   guards/       cross-cutting request admission
+ *   dto/          inbound validation, at the edge
+ *   utils/        pure helpers with no dependencies of their own
  *
- * JwtAuthGuard is exported rather than registered globally (APP_GUARD) so that adding a new
- * feature module is an explicit decision about its auth posture, instead of everything being
- * protected-by-default until someone adds @Public and quietly opens a hole.
+ * ⚠️ NOTE ONE DEVIATION, DELIBERATE AND TEMPORARY: identity has no `repositories/` layer yet — its
+ * services still hold their own SQL. `catalog/` and `leads/` are the reference implementation of
+ * the full pattern. Extracting identity's data access is a real refactor rather than a file move
+ * (refresh-token rotation and reuse detection are subtle, and the smoke coverage for them lives in
+ * a throwaway script), so it is queued rather than bundled into a structural change.
+ *
+ * ⚠️ `JwtAuthGuard` is exported, not registered as an APP_GUARD. Global registration would make
+ * every future route authenticated by default — which sounds safer and is wrong here: the entire
+ * public catalog must be anonymous and crawlable, and a globally-guarded app would have every
+ * catalog route opting out with `@Public()`, so one forgotten decorator takes a page off Google
+ * rather than exposing anything. Guarding is applied per controller, where it is visible.
  */
 @Module({
-  imports: [JwtModule.register({})],
+  imports: [
+    // Secrets are supplied per-call by TokenService: access and refresh tokens are signed with
+    // DIFFERENT keys, so a module-level default would be wrong for one of them.
+    JwtModule.register({}),
+  ],
   controllers: [StaffAuthController, ContactAuthController],
   providers: [
-    PasswordService,
-    TokenService,
-    OtpService,
     StaffAuthService,
     ContactAuthService,
+    TokenService,
+    PasswordService,
+    OtpService,
     JwtAuthGuard,
   ],
-  exports: [TokenService, PasswordService, JwtAuthGuard],
+  exports: [JwtAuthGuard, TokenService],
 })
 export class IdentityModule {}

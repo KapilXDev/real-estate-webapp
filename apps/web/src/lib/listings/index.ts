@@ -5,16 +5,19 @@
  * provider class. That indirection is what lets the real inventory source drop in with no UI
  * changes.
  *
- * TO GO LIVE WITH REAL INVENTORY:
- *   1. Build the catalog module in apps/api (listings CRUD + partner inventory).
- *   2. Implement ApiProvider in ./api-provider.ts against the same ListingProvider interface.
- *   3. Set LISTING_PROVIDER=api plus NEXT_PUBLIC_API_URL.
- *   4. Nothing else changes.
+ * TO GO LIVE WITH REAL INVENTORY: set `LISTING_PROVIDER=api` and `API_URL`. That is the whole
+ * change — `ApiProvider` is built and every UI component already goes through this factory.
+ *
+ * ⚠️ DO NOT SET IT UNTIL THERE ARE REAL LISTINGS IN THE DATABASE. `ApiProvider.isLiveData` is
+ * true, which un-suppresses RERA attribution and lets robots.ts allow indexing. Pointed at demo
+ * rows, that publishes fabricated inventory under a real registration number — an advertising
+ * problem, not a display bug.
  *
  * NOTE the env var was renamed from MLS_PROVIDER — there is no MLS in this market, and the old
  * name would send the next person looking for a feed integration that does not exist.
  */
 
+import { ApiProvider } from "./api-provider";
 import { MockProvider } from "./mock-provider";
 import type { ListingProvider } from "./provider";
 
@@ -25,16 +28,26 @@ export function getListingProvider(): ListingProvider {
 
   switch (process.env.LISTING_PROVIDER) {
     case "api":
-      // Deliberately a hard failure rather than a silent fallback. Quietly serving fabricated
-      // listings on a site that presents itself as real inventory is a RERA advertising problem,
-      // not just a bug.
-      throw new Error(
-        "LISTING_PROVIDER=api but ApiProvider is not implemented yet. " +
-          "Implement src/lib/listings/api-provider.ts once the catalog module is built.",
-      );
-    default:
+      provider = new ApiProvider();
+      return provider;
+
+    case "mock":
+    case undefined:
+    case "":
       provider = new MockProvider();
       return provider;
+
+    default:
+      /*
+       * ⚠️ An unrecognised value is a HARD FAILURE, never a fallback to mock.
+       *
+       * A typo like `LISTING_PROVIDER=API` silently serving fabricated listings on a site that
+       * presents itself as real inventory is a RERA advertising problem rather than a
+       * configuration annoyance — and it would look completely normal in production.
+       */
+      throw new Error(
+        `Unknown LISTING_PROVIDER "${process.env.LISTING_PROVIDER}". Expected "api" or "mock".`,
+      );
   }
 }
 

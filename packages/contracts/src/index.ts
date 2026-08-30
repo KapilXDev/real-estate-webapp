@@ -13,4 +13,8 @@
  *    behaviour. Keeping them separate stops framework concerns leaking into the browser bundle.
  */
 
-export {};
+// Extensionless specifiers on purpose: these packages ship raw TS and are compiled by the
+// consumer. A `.js` specifier would not resolve back to the source under Turbopack.
+export * from "./catalog";
+export * from "./leads";
+

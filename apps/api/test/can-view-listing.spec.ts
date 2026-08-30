@@ -46,9 +46,31 @@ const STATUSES: ListingStatus[] = [
 ];
 
 /**
- * The rule, restated from the product requirement rather than transcribed from 0010:
+ * Is this listing in the public catalog?
  *
- *  - Anything PUBLIC + ACTIVE is world-readable. That is the catalog.
+ * Restated from the product requirement rather than transcribed from the SQL — that is what makes
+ * this a genuine second opinion rather than a paraphrase of the implementation.
+ *
+ *  - PUBLIC + ACTIVE is world-readable. That is the catalog.
+ *  - PUBLIC + UNDER_OFFER is too: buyers benefit from seeing it, it carries no settlement figure,
+ *    and hiding it makes inventory silently vanish mid-negotiation.
+ *  - PUBLIC + SOLD/RENTED is world-readable ONLY for the host organisation — its own track record
+ *    is deliberate marketing. A partner's closed listings carry `close_price`, and publishing what
+ *    a rival settled at, to that rival, is worse than the problem it solves. See 0017.
+ */
+function isPublicCatalog(
+  visibility: ListingVisibility,
+  status: ListingStatus,
+  ownerIsHost: boolean,
+): boolean {
+  if (visibility !== "PUBLIC") return false;
+  if (status === "ACTIVE" || status === "UNDER_OFFER") return true;
+  return ownerIsHost && (status === "SOLD" || status === "RENTED");
+}
+
+/**
+ * The tier rules, likewise restated:
+ *
  *  - FULL means a trusted partner sees everything the host has, at any status or visibility.
  *  - NETWORK adds network-only inventory, but still only when it is ACTIVE — a rival must never
  *    see a draft or a rejected listing.
@@ -60,8 +82,8 @@ function expectedForPartner(
   visibility: ListingVisibility,
   status: ListingStatus,
 ): boolean {
-  const isPublicCatalog = visibility === "PUBLIC" && status === "ACTIVE";
-  if (isPublicCatalog) return true;
+  // hostOrg in this suite is NOT flagged is_host — that case gets its own describe below.
+  if (isPublicCatalog(visibility, status, false)) return true;
 
   switch (tier) {
     case "FULL":
@@ -156,7 +178,7 @@ describe("can_view_listing — principals outside the partner matrix", () => {
   it("an unrelated organisation sees only the public catalog", async () => {
     for (const visibility of VISIBILITIES) {
       for (const status of STATUSES) {
-        const expected = visibility === "PUBLIC" && status === "ACTIVE";
+        const expected = isPublicCatalog(visibility, status, false);
         await expect(canView(strangerOrg.id, visibility, status)).resolves.toBe(expected);
       }
     }
@@ -165,7 +187,7 @@ describe("can_view_listing — principals outside the partner matrix", () => {
   it("an anonymous visitor sees only the public catalog", async () => {
     for (const visibility of VISIBILITIES) {
       for (const status of STATUSES) {
-        const expected = visibility === "PUBLIC" && status === "ACTIVE";
+        const expected = isPublicCatalog(visibility, status, false);
         await expect(canView(null, visibility, status)).resolves.toBe(expected);
       }
     }
@@ -256,5 +278,55 @@ describe("can_view_listing — hardening", () => {
     `;
 
     expect(row!.granted).toBe(false);
+  });
+});
+
+describe("can_view_listing — sold history is public for the HOST only", () => {
+  /*
+   * ⚠️ THE ASYMMETRY IS THE POINT, and it is worth a dedicated suite because it is the one rule
+   * here that is not "the same for everyone".
+   *
+   * The host's closed deals are its own advertised track record — the strongest credibility
+   * signal on an agent site. Every other organisation's closed deals carry a `close_price` that
+   * is nobody else's business, least of all a competitor's. If this ever collapses into "all
+   * SOLD listings are public", partner settlement prices leak to their rivals.
+   */
+  let hostOwned: TestOrg;
+
+  beforeAll(async () => {
+    hostOwned = await createOrg(db.sql, { name: "The Host Brokerage", type: "BROKERAGE" });
+    await db.sql`UPDATE organization SET is_host = true WHERE id = ${hostOwned.id}`;
+  });
+
+  for (const status of ["SOLD", "RENTED"] as const) {
+    it(`shows a host's PUBLIC ${status} listing to an anonymous visitor`, async () => {
+      await expect(
+        canView(null, "PUBLIC", status, { ownerOrgId: hostOwned.id }),
+      ).resolves.toBe(true);
+    });
+
+    it(`HIDES a non-host's PUBLIC ${status} listing from an anonymous visitor`, async () => {
+      await expect(canView(null, "PUBLIC", status, { ownerOrgId: hostOrg.id })).resolves.toBe(
+        false,
+      );
+    });
+  }
+
+  it("does not widen anything beyond PUBLIC visibility, even for the host", async () => {
+    for (const visibility of ["NETWORK_ONLY", "PRIVATE"] as const) {
+      for (const status of ["SOLD", "RENTED", "DRAFT", "WITHDRAWN"] as const) {
+        await expect(
+          canView(null, visibility, status, { ownerOrgId: hostOwned.id }),
+        ).resolves.toBe(false);
+      }
+    }
+  });
+
+  it("still hides the host's withdrawn and rejected listings", async () => {
+    for (const status of ["DRAFT", "PENDING_REVIEW", "WITHDRAWN", "REJECTED", "EXPIRED"] as const) {
+      await expect(
+        canView(null, "PUBLIC", status, { ownerOrgId: hostOwned.id }),
+      ).resolves.toBe(false);
+    }
   });
 });

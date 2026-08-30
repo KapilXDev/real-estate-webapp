@@ -2,7 +2,7 @@ import { Controller, Get, HttpCode, HttpStatus } from "@nestjs/common";
 import { SkipThrottle } from "@nestjs/throttler";
 
 import { DatabaseService } from "../database/database.service";
-import { Public } from "../identity/jwt-auth.guard";
+import { Public } from "../identity/guards/jwt-auth.guard";
 
 /**
  * Health endpoints.

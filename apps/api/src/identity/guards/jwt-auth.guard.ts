@@ -8,9 +8,9 @@ import {
 import { Reflector } from "@nestjs/core";
 import type { Request } from "express";
 
-import type { TenantContext } from "../database/database.service";
-import type { AccessTokenClaims } from "./token.service";
-import { TokenService } from "./token.service";
+import type { TenantContext } from "../../database/database.service";
+import type { AccessTokenClaims } from "../services/token.service";
+import { TokenService } from "../services/token.service";
 
 /** Marks a route as reachable without a token. */
 export const IS_PUBLIC = "isPublic";

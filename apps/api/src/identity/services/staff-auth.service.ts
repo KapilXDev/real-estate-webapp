@@ -5,8 +5,8 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 
-import { DatabaseService } from "../database/database.service";
-import type { UserRole, UserStatus, OrgStatus } from "../database/schema/enums";
+import { DatabaseService } from "../../database/database.service";
+import type { UserRole, UserStatus, OrgStatus } from "../../database/schema/enums";
 import { PasswordService } from "./password.service";
 import { TokenReuseDetectedError, TokenService } from "./token.service";
 

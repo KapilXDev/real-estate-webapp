@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService } from "../../database/database.service";
 import { OtpService } from "./otp.service";
 import { PasswordService } from "./password.service";
 import { TokenReuseDetectedError, TokenService } from "./token.service";

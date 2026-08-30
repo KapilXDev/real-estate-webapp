@@ -1,6 +1,6 @@
 # Tricity Estate — Project Context
 
-> **Resuming in a fresh session? Read this file, then `docs/BUILD_LOG.md`.**
+> **Resuming in a fresh session? Read this file, then `docs/BUILD_LOG.md`, then `docs/FLOWS.md`.**
 > Between them you have the full plan and the exact current state. You should not need to
 > re-explore the codebase or redo research to continue.
 
@@ -113,6 +113,10 @@ figures, before launch.
   listings, about, contact, EMI/stamp-duty calculator, market reports, sitemap, robots, JSON-LD.
 - **Phase 2 — search/filters/saved-search/lead scoring done.** Remaining: user accounts +
   favourites, and actually *sending* alerts (needs an email/WhatsApp provider).
+- **Catalog + leads modules built.** The website serves REAL inventory from Postgres when
+  `LISTING_PROVIDER=api`; forms write leads to Postgres. 152 integration tests.
+  **Largest gaps now: no admin UI (inventory and leads are API-only) and no media upload.**
+  See `docs/FLOWS.md` for the full buyer/seller/agent journeys and what is missing.
 - **Backend — identity slice RUNNING against real Postgres.** `apps/api` serves helmet, CORS,
   zod-validated config, a global throttler, the JWT guard, health probes, and a full identity
   module (staff email+password, consumer phone-OTP + linked email/password, rotating refresh
@@ -203,6 +207,20 @@ Next, in order:
 - **`refresh_token` holds two kinds of principal** (`user_id` XOR `contact_id`, enforced by CHECK).
   Both auth services must reject a token of the wrong kind, or a consumer session could be
   upgraded to a staff one.
+- **⚠️ `apps/api` must `import type` from `@tricity/contracts` — NEVER a value import.** The app
+  compiles to CommonJS, the workspace packages ship raw TypeScript, and Node cannot `require()` a
+  `.ts` file. A value import passes `tsc` and then dies at boot with `ERR_MODULE_NOT_FOUND` on an
+  extensionless specifier. `catalog/utils/locality-ref.ts` duplicates the one runtime helper;
+  `catalog-contract.spec.ts` round-trips the real encoder through the real DTO so they cannot drift.
+- **A DTO property name must match the wire query key.** The global ValidationPipe runs with
+  `forbidNonWhitelisted`, so a mismatch is a 400 — not an ignored parameter. `?area=` with a
+  property called `localities` made every locality search fail with "property area should not
+  exist", which reads like a validator bug.
+- **RERA registrations are per (organisation, jurisdiction)** — `organization_rera`, resolved by
+  joining on the listing's CITY state. `ListingAdminService` blocks publication without a valid one
+  for that jurisdiction; drafts are always allowed. Do not add a bypass flag.
+- **`vitest` needs `reflect-metadata` as a setup file** for any suite importing a DTO, or
+  class-validator decorators fail with `Reflect.getMetadata is not a function`.
 - **NestJS satellite packages at v12 are pure ESM** and cannot be imported from this CJS app —
   keep `@nestjs/*` on the 11 line. `@nestjs/config` and `@nestjs/passport` were removed; config is
   zod, the guard is hand-written.
@@ -239,6 +257,12 @@ Next, in order:
 - Server Components by default; client components only for map + interactive filters.
 - Listing/locality pages must be server-rendered and crawlable (SEO is a core feature).
 - Never hardcode localities or agent details — they live in `@tricity/geo` and `config/site.ts`.
+- **Every `apps/api` module is layered** — `controllers/` (HTTP shape only) `services/`
+  (decisions) `repositories/` (**the only place SQL is written**; every method goes through
+  `withTenant()`) `mappers/` (row→wire, pure) `dao/` (row shapes) `dto/` (edge validation)
+  `utils/`. `catalog/` and `leads/` are the reference. The point is that the tenant rule is
+  greppable: SQL outside `repositories/` is wrong. `identity/` has the directories but not yet a
+  `repositories/` layer — extracting it is queued.
 - Nx module boundaries in `.eslintrc.boundaries.json` are the Spring Modulith substitute.
 - Target LCP < 2.5s.
 
