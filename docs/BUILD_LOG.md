@@ -9,39 +9,39 @@ without re-exploring. Newest entry at the top.
 
 ## NEXT UP — resume point for a fresh session
 
-**The database blocker is GONE. Every migration has run, the schema is real, and the identity
-module has been exercised end to end against live Postgres (28/28 checks).** Nothing below is
-speculative any more — see Step 13.
+**Backend is real and now defended by tests.** 14 migrations applied, seed loaded, identity
+verified end to end, and 132 integration tests covering tenant isolation. Nothing below is
+speculative.
 
 **Standing environment facts (do NOT re-diagnose):**
 - `docker version` responds. Container `tricity-postgres`, image `postgis/postgis:16-3.4`.
-- 12 migrations applied, seed loaded: 6 cities, 102 localities. PostGIS 3.4, GEOS + PROJ.
-- Dev credentials for smoke work: `owner@tricityestate.test` / `dev-owner-password-123`
-  (org `tricity-estate`), created via `npm run db:bootstrap` — see Step 13.
+- **TWO database roles, not interchangeable.** `DATABASE_URL` = `tricity` (owner, superuser
+  locally, DDL only). `APP_DATABASE_URL` = `tricity_app` (what serves requests). A superuser
+  ignores RLS entirely — see Step 14. The API refuses to boot if it connects as a privileged role.
+- Dev staff login: `owner@tricityestate.test` / `dev-owner-password-123`, org `tricity-estate`.
 
 **Next, in order:**
 
-1. **Testcontainers integration tests.** This is now the whole job — the code works, but nothing
-   is guarding it. Priority order, and the first one matters far more than the rest:
-   - **That `FORCE ROW LEVEL SECURITY` actually bites.** Two orgs, one listing each; org A must
-     get zero rows for org B's listing. Step 12 shipped this as a silent no-op once already, and
-     nothing would have caught it. Single most valuable test in the repo.
-   - `can_view_listing()` across every (tier × visibility × status) combination. 4 tiers × 3
-     visibilities × 9 statuses — table-drive it.
-   - Refresh rotation + reuse detection (currently only covered by the throwaway smoke script).
-   - `withTenant()` leaks nothing across pooled connections: run two interleaved transactions and
-     assert the second cannot see the first's `app.current_org_id`.
-2. **Catalog module** — property/listing CRUD for staff, public search for the site.
+1. **Catalog module** — property + listing CRUD for staff, public search for the site. The RLS
+   groundwork is done and tested, so this is now ordinary work. Use `withTenant()` for everything;
+   the listing SELECT policy already resolves partner tiers.
+2. **Identity tests.** The 28-check smoke script lives only in a scratch directory and dies with
+   the session. Port it to `test/identity.spec.ts` against the harness — especially refresh
+   rotation / reuse detection and the principal-kind separation, which are currently unguarded.
 3. **`ApiProvider` in `apps/web`** to replace `MockProvider`, behind the existing
-   `LISTING_PROVIDER` env seam.
+   `LISTING_PROVIDER` seam.
+4. **ESLint 9 flat config for `apps/api`** — there is none, so `npm run lint` cannot cover this
+   workspace at all.
 
 **Known-good commands:**
 ```
 npm run db:up          # PostGIS container
 npm run db:migrate     # idempotent, checksum-verified
+npm run db:app-role    # runtime role password; run after any new migration that adds tables
 npm run db:seed        # idempotent
 npm run db:bootstrap -- --email you@example.com --name "You" --org "Firm"
 npm run api:dev        # http://localhost:3001/api
+npm test --workspace=@tricity/api     # 132 integration tests, ~2s
 ```
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
@@ -51,6 +51,148 @@ npm run api:dev        # http://localhost:3001/api
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-29 — Step 14: The first real test found that RLS was still switched off entirely
+
+**132 integration tests, and the first run failed 11 of them.** Not because the tests were wrong.
+
+## 🔴 ROW-LEVEL SECURITY WAS A COMPLETE NO-OP. AGAIN. FOR A DIFFERENT REASON.
+
+Step 12 found that `ENABLE ROW LEVEL SECURITY` alone does nothing when the app connects as the
+table owner, and added `FORCE ROW LEVEL SECURITY` to fix it. That was necessary and **it was not
+sufficient**, which nobody could have known without running a query as one org and asking for
+another org's rows.
+
+**A SUPERUSER BYPASSES ROW-LEVEL SECURITY UNCONDITIONALLY. So does any role with `BYPASSRLS`.
+`FORCE` does not apply to them.** The check is skipped before policies are ever consulted — there
+is no policy, no `GRANT`, and no schema change that can stop it.
+
+The `postgis/postgis` image makes `POSTGRES_USER` a superuser. So `tricity` — the role in
+`DATABASE_URL`, the role the API connected as — had `rolsuper = t, rolbypassrls = t`, and every
+policy in 0010 was inert. An organisation could read, update and delete every rival's listings and
+leads. The schema was word-for-word what the design called for, `\d listing` showed
+`Policies (forced row security enabled)`, and none of it did anything.
+
+What the failing tests actually showed: an unrelated third org could `SELECT` a partnership it was
+not party to, a partner could `UPDATE` its own tier to `FULL`, and a query with **no tenant
+context at all** returned every listing in the database.
+
+### The fix is a second role, because the problem is not a permission
+
+`0013_app_role.sql` creates `tricity_app` — `NOSUPERUSER`, `NOBYPASSRLS`, `NOCREATEDB`, no DDL,
+DML grants only. The `ALTER ROLE` in the idempotent branch is deliberate: re-running migrations
+takes `SUPERUSER`/`BYPASSRLS` back off a live role rather than leaving the hole open.
+
+Two connection strings now, and they are **not interchangeable**:
+
+| | role | used by |
+|---|---|---|
+| `DATABASE_URL` | `tricity` (owner, superuser locally) | migrations, seed, bootstrap — DDL only |
+| `APP_DATABASE_URL` | `tricity_app` | **everything that serves a request** |
+
+The role is created `NOLOGIN`: a migration must run anywhere and must not invent credentials.
+`npm run db:app-role` sets the password from `APP_DATABASE_URL` and verifies the result. It builds
+the `ALTER ROLE` via `format('... %I ... %L', ...)` **inside Postgres** — `ALTER ROLE` is a utility
+statement and takes no bind parameters, so the password has to reach the server inside SQL text,
+and the server's own quoting is a better answer than hand-rolled escaping.
+
+Two grants that are easy to miss and both fail loudly at runtime rather than at migration time:
+`can_view_listing` and the three `auth_lookup_*` functions were `REVOKE`d from `PUBLIC` (correctly
+— they are `SECURITY DEFINER`), so the runtime role needs them granted back explicitly or the
+listing policy itself errors and login cannot look a user up. And `ALTER DEFAULT PRIVILEGES`, or
+every table added by a future migration would be invisible to the API.
+
+**The runtime role has no `CREATE` on the schema.** That is the second half of the 0012 defence:
+0012 pins `search_path` on the definer-rights functions, and this removes the ability to plant a
+shadowing object on any path at all.
+
+### The guard that makes it unrepeatable
+
+`assertRuntimeRoleCannotBypassRls()` runs in `DatabaseService.onModuleInit` and **refuses to
+boot** if the connected role is a superuser or has `BYPASSRLS`. Not a warning and not a health
+check: this failure mode produces no error, no log line and entirely correct-looking results, so
+the only place it can be caught is before the first request. `APP_DATABASE_URL` falls back to
+`DATABASE_URL` when unset purely so an existing checkout still starts — and then fails at this
+assertion with instructions, which is the intended outcome rather than a silent downgrade.
+
+## 🔴 Second bug: `can_view_listing` returned NULL, not false
+
+Found by the exhaustive matrix, on the anonymous row. `current_org_id()` is NULL when unset, so
+`l_org_id = current_org_id()` is NULL, and `false OR NULL OR false OR false` is NULL in
+three-valued logic. Only the public-catalog branch rescued it, because `NULL OR true` is true —
+which is exactly why public browsing worked and nothing looked wrong.
+
+**Not a leak**, because a policy's `USING` clause treats NULL as false, so it failed closed in the
+one place it is currently used. That is luck, not design. The function is granted to the runtime
+role and is an ordinary callable predicate; the moment anyone writes `NOT can_view_listing(...)` —
+an "inventory I cannot see" admin report, an exclusion filter, a CHECK — the answer is NULL, which
+is not true, and the query silently returns nothing. `0014` wraps it in `coalesce(..., false)`.
+
+⚠️ `CREATE OR REPLACE FUNCTION` resets a function's attributes to whatever the command states, so
+0014 repeats `SECURITY DEFINER` and the pinned `search_path` in full. Omitting either would have
+silently undone 0012.
+
+## The test harness
+
+`test/support/database.ts`. **Testcontainers was the plan and is the wrong trade here.** These
+tests assert things about the *schema*, so what they need is a real Postgres with our migrations
+on it — which the dev Compose stack already provides. Testcontainers would add a heavyweight
+dependency and 5-15s of container start to buy an isolation guarantee `CREATE DATABASE` gives for
+free. If CI needs a container it is one `services:` block in the workflow, not a code change:
+everything keys off `DATABASE_URL`.
+
+A **template database** is built once per `vitest` run (globalSetup: migrate + seed), and each
+test file clones it with `CREATE DATABASE ... TEMPLATE`, which is a file copy. Per-suite isolation
+therefore costs almost nothing, so there is no incentive to share a database between suites — and
+a suite that leaked a stray organisation would otherwise silently change another suite's result.
+`DROP ... WITH (FORCE)` on teardown, because one leaked connection would otherwise cascade into
+every later test failing for an unrelated reason. **Full run: 1.6s.**
+
+⚠️ **The suites connect as `tricity_app`, not the owner.** This is the whole ballgame: as a
+superuser every assertion in `rls.spec.ts` passes against a schema with no isolation whatsoever —
+thorough-looking and worthless. There is a consequence worth knowing: the runtime role is *not*
+the table owner, so it would be subject to policies even if `FORCE` were removed. Behaviour alone
+can no longer detect a missing `FORCE`, which is why `rls.spec.ts` asserts `relforcerowsecurity`
+against `pg_class` directly.
+
+Fixtures write through `asTenant` rather than bypassing RLS, so setup is subject to the same
+policies as production — a fixture that cheats can build a world the application could never
+produce and then "prove" something about it.
+
+## What is now covered — 132 tests
+
+- **`rls.spec.ts`** — cross-tenant read both directions, anonymous, aggregate counts (a leak
+  through `COUNT(*)` would expose inventory volume, itself commercially sensitive), cross-tenant
+  `UPDATE`, `WITH CHECK` on a forged `organization_id`, `app_user` scoping, platform-admin
+  override, missing tenant context degrading to *fewer* rows rather than more, partner
+  self-promotion to `FULL` being blocked, and `ENABLE`+`FORCE` asserted against `pg_class`.
+- **`can-view-listing.spec.ts`** — all 108 (4 tiers × 3 visibilities × 9 statuses) combinations
+  plus owner / stranger / anonymous / platform-admin, and that a `PENDING`/`SUSPENDED`/`REVOKED`
+  partnership drops a `FULL` partner back to the public catalog. Expectations are computed from an
+  **independent restatement** of the rule, not transcribed from the SQL, so it is a real second
+  opinion. Hardening assertions too: every `SECURITY DEFINER` function in `public` pins its
+  `search_path` (written over `pg_proc`, not a hardcoded list, so a function added later is
+  covered), and `can_view_listing` is not executable by `PUBLIC`.
+
+`tsconfig.spec.json` typechecks `test/` — `tsconfig.json`'s `include` stays limited to `src/**/*`
+so `nest build` cannot emit spec files or test-only database-dropping helpers into a production
+image. Verified: `dist/` contains `src` only.
+
+## Verified
+
+- 132/132 integration tests, 1.6s.
+- The 28-check identity smoke pass still green **through the restricted role** — proving the
+  grants in 0013 are complete, including the `SECURITY DEFINER` re-grants.
+- API boots and logs `Database role verified: row-level security applies to this connection.`
+- `nest build` clean, `tsc -p tsconfig.spec.json` clean.
+
+## Known gap, not addressed
+
+`apps/api` has **no ESLint 9 flat config**, so `npx eslint src test` cannot run at all and
+`npm run lint` cannot cover this workspace. Pre-existing, unrelated to this step, and left alone
+rather than folded into a security change.
 
 ---
 

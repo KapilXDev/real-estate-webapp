@@ -116,8 +116,9 @@ figures, before launch.
 - **Backend — identity slice RUNNING against real Postgres.** `apps/api` serves helmet, CORS,
   zod-validated config, a global throttler, the JWT guard, health probes, and a full identity
   module (staff email+password, consumer phone-OTP + linked email/password, rotating refresh
-  tokens with reuse detection). All 12 migrations applied, seed loaded, 28/28 end-to-end checks
-  passing. **No automated tests yet** — every bug so far was found by hand. That is the next job.
+  tokens with reuse detection). All 14 migrations applied, seed loaded, 28/28 end-to-end checks
+  passing, and **132 integration tests covering tenant isolation**. Identity itself is still
+  covered only by a throwaway smoke script — porting it into the harness is queued.
 - **Phase 3 — NOT STARTED.** AI natural-language search, grounded concierge chatbot,
   speed-to-lead auto-WhatsApp (TODO marker in `src/app/api/leads/route.ts`), automated market emails.
 
@@ -131,8 +132,10 @@ build log for exactly what was run and what it found.
 ```
 npm run db:up          # PostGIS container (postgis/postgis:16-3.4, name tricity-postgres)
 npm run db:migrate     # idempotent, checksum-verified
+npm run db:app-role    # runtime role login — re-run after a migration that adds tables
 npm run db:seed        # 6 cities, 102 localities
 npm run api:dev        # http://localhost:3001/api
+npm test --workspace=@tricity/api
 ```
 
 Dev staff credentials, if you need a signed-in session:
@@ -140,24 +143,44 @@ Dev staff credentials, if you need a signed-in session:
 `npm run db:bootstrap -- --email you@example.com --name "You" --org "Firm"` — there is no staff
 registration route by design, so this command is the only way the first admin exists.
 
-**The next job is tests, ahead of any new feature.** Every bug so far was found by hand, and
-nothing in the repo guards any of it. In priority order:
+**Tenant isolation is now tested — 132 integration tests, ~2s** (`npm test --workspace=@tricity/api`).
+They found that RLS was still completely switched off, for a second and different reason than the
+one fixed in step 12; read the two-roles note under "Backend rules" before touching any connection
+string. Tests run against a template database cloned per suite — no Testcontainers, no new
+dependency; see `apps/api/test/support/database.ts`.
 
-1. **That `FORCE ROW LEVEL SECURITY` actually bites** — one org must not be able to read
-   another's listing. It already shipped as a silent no-op once and nothing caught it. Single
-   most valuable test in the repo; see the RLS note below.
-2. `can_view_listing()` across every tier × visibility × status.
-3. Refresh-token rotation: presenting a used token must revoke the whole family.
-4. `withTenant()` leaks no org across pooled connections.
+Next, in order:
 
-Then: catalog module, then `ApiProvider` in `apps/web` to replace `MockProvider`.
+1. **Catalog module** — property + listing CRUD for staff, public search for the site. The RLS
+   groundwork is done and tested, so this is ordinary work now.
+2. **Identity tests** — the 28-check smoke pass exists only as a throwaway script. Port refresh
+   rotation, reuse detection and principal-kind separation into the harness.
+3. **`ApiProvider` in `apps/web`** to replace `MockProvider`.
+4. **ESLint 9 flat config for `apps/api`** — there is none, so `npm run lint` skips it entirely.
 
 ## Backend rules that are easy to get catastrophically wrong
 
+- **⚠️⚠️ THE API MUST CONNECT AS `tricity_app`, NEVER AS THE OWNER.** A superuser — or any role
+  with `BYPASSRLS` — **ignores row-level security completely**. `FORCE` does not apply and no
+  policy is ever consulted. The postgres Docker image makes `POSTGRES_USER` a superuser, so
+  serving requests over `DATABASE_URL` turns every policy in `0010` into a silent no-op with no
+  error and entirely correct-looking results. There are **two connection strings and they are not
+  interchangeable**: `DATABASE_URL` (owner — migrations, seed, bootstrap, DDL only) and
+  `APP_DATABASE_URL` (runtime, `tricity_app`, created by `0013`). The API refuses to boot
+  otherwise — `assertRuntimeRoleCannotBypassRls()` in `database/app-role.ts`. Do not "simplify"
+  the two URLs into one.
 - **`ENABLE ROW LEVEL SECURITY` is not enough.** Postgres exempts the table OWNER from its own
-  policies, and the API connects as the migration role. Every table under RLS also needs
-  `FORCE ROW LEVEL SECURITY` — without it the policies are silent no-ops and partners can read
-  each other's inventory. Fixed in `0010`; do not "simplify" it back.
+  policies. Every table under RLS also needs `FORCE ROW LEVEL SECURITY` — without it the policies
+  are silent no-ops. Fixed in `0010`; do not "simplify" it back. Note that the runtime role is not
+  the owner, so behaviour alone no longer detects a missing `FORCE` — `rls.spec.ts` asserts
+  `relforcerowsecurity` against `pg_class` directly for that reason.
+- **A security predicate must never return NULL.** `current_org_id()` is NULL when unset, so
+  `org_id = current_org_id()` is NULL and an `OR` chain over it yields NULL, not false. A `USING`
+  clause treats that as false so it fails closed — but `NOT can_view_listing(...)` is then NULL
+  too, and that query silently returns nothing. `coalesce(..., false)` — fixed in `0014`.
+- **`CREATE OR REPLACE FUNCTION` resets the function's attributes.** `SECURITY DEFINER` and
+  `SET search_path` must be restated in full every time, or replacing a function silently strips
+  its hardening.
 - **Pre-authentication lookups go through the `SECURITY DEFINER` functions in `0011`**, never by
   disabling RLS and never by setting `is_platform_admin` (which would grant an unauthenticated
   caller admin over every table). Anything added there must pin `search_path` and return the

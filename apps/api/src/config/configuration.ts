@@ -12,7 +12,28 @@ const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3001),
 
+  /**
+   * OWNER connection — migrations, seed, bootstrap. DDL rights, and in local Docker a superuser.
+   * The API must NOT serve requests through this; see APP_DATABASE_URL.
+   */
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+
+  /**
+   * ⚠️ RUNTIME connection, and the reason tenant isolation works at all.
+   *
+   * A superuser (or any BYPASSRLS role) IGNORES row-level security outright — FORCE does not
+   * apply to it and no policy is ever consulted. The Docker image makes POSTGRES_USER a
+   * superuser, so serving requests over DATABASE_URL silently disables every policy in 0010.
+   *
+   * This points at `tricity_app` (migration 0013): NOSUPERUSER, NOBYPASSRLS, DML only.
+   * `assertRuntimeRoleCannotBypassRls()` refuses to boot if it resolves to a privileged role.
+   *
+   * Falls back to DATABASE_URL only so an existing checkout still boots — the startup assertion
+   * then fails loudly with instructions, which is the intended outcome rather than a silent
+   * downgrade to no isolation.
+   */
+  APP_DATABASE_URL: z.string().min(1).optional(),
+
   /** API pool size. Kept separate from worker pools — see the bulkhead note in client.ts. */
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
 
@@ -47,6 +68,8 @@ const schema = z.object({
 export type AppConfig = z.infer<typeof schema> & {
   corsOrigins: string[];
   isProduction: boolean;
+  /** What the API actually connects as. APP_DATABASE_URL when set, else DATABASE_URL. */
+  runtimeDatabaseUrl: string;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -65,6 +88,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       .map((s) => s.trim())
       .filter(Boolean),
     isProduction: parsed.data.NODE_ENV === "production",
+    runtimeDatabaseUrl: parsed.data.APP_DATABASE_URL ?? parsed.data.DATABASE_URL,
   };
 }
 

@@ -1,0 +1,17 @@
+{
+  // Type checking for the integration tests.
+  //
+  // A separate file because tsconfig.json's `include` is deliberately limited to `src/**/*` —
+  // that is what keeps `nest build` from emitting spec files into dist and shipping test-only
+  // database-dropping helpers in a production image. The cost of that exclusion is that nothing
+  // would typecheck `test/` at all, which is what this file buys back.
+  //
+  // Run via `npm run typecheck --workspace=@tricity/api`. Vitest itself does not typecheck.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // vitest is imported explicitly in every spec (`globals: false`), so no ambient types needed.
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

@@ -1,6 +1,7 @@
-import { Inject, Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 
 import { APP_CONFIG, type AppConfig } from "../config/configuration";
+import { assertRuntimeRoleCannotBypassRls } from "./app-role";
 import { createDbClient, type Database, type DbClient, type RawSql } from "./client";
 
 /**
@@ -21,14 +22,16 @@ export const ANONYMOUS: TenantContext = {
 };
 
 @Injectable()
-export class DatabaseService implements OnModuleDestroy {
+export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DatabaseService.name);
   private readonly client: DbClient;
   readonly sql: RawSql;
 
   constructor(@Inject(APP_CONFIG) config: AppConfig) {
+    // runtimeDatabaseUrl, NOT DATABASE_URL: the owner role is a superuser in local Docker and
+    // would bypass every RLS policy. See configuration.ts and migration 0013.
     this.client = createDbClient({
-      connectionString: config.DATABASE_URL,
+      connectionString: config.runtimeDatabaseUrl,
       max: config.DATABASE_POOL_MAX,
     });
     this.sql = this.client.sql;
@@ -103,6 +106,18 @@ export class DatabaseService implements OnModuleDestroy {
       );
       return false;
     }
+  }
+
+  /**
+   * ⚠️ Refuses to serve traffic if the connected role can bypass row-level security.
+   *
+   * `OnModuleInit` rather than a health check: an API that cannot enforce tenant isolation must
+   * never accept a single request, and a role that ignores RLS produces no error and no wrong
+   * answer — just one brokerage quietly reading another's inventory. See app-role.ts.
+   */
+  async onModuleInit(): Promise<void> {
+    await assertRuntimeRoleCannotBypassRls(this.sql);
+    this.logger.log("Database role verified: row-level security applies to this connection.");
   }
 
   async onModuleDestroy(): Promise<void> {

@@ -16,6 +16,7 @@
     "db:migrate": "npm run db:migrate --workspace=@tricity/api",
     "db:seed": "npm run db:seed --workspace=@tricity/api",
     "db:bootstrap": "npm run db:bootstrap --workspace=@tricity/api --",
+    "db:app-role": "npm run db:app-role --workspace=@tricity/api",
     "lint": "nx run-many -t lint",
     "test": "nx run-many -t test",
     "build": "nx run-many -t build"
