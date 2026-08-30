@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { formatPrice } from "@/lib/format";
+import { submitLead } from "@/lib/leads/submit";
 import type { Listing } from "@/lib/listings/types";
 
 /**
@@ -28,29 +29,24 @@ export function TourRequestForm({ listing }: { listing: Listing }) {
 
     const formData = new FormData(event.currentTarget);
 
-    try {
-      const response = await fetch("/api/leads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "tour-request",
-          name: formData.get("name"),
-          email: formData.get("email"),
-          phone: formData.get("phone"),
-          message: formData.get("message"),
-          preferredDate: formData.get("preferredDate"),
-          listingKey: listing.listingKey,
-          listingAddress: listing.address.unparsed,
-          listingPrice: listing.listPrice,
-        }),
-      });
+    const problem = await submitLead({
+      type: "tour-request",
+      name: formData.get("name"),
+      email: formData.get("email"),
+      phone: formData.get("phone"),
+      message: formData.get("message"),
+      preferredDate: formData.get("preferredDate"),
+      listingKey: listing.listingKey,
+      listingAddress: listing.address.unparsed,
+      listingPrice: listing.listPrice,
+    });
 
-      if (!response.ok) throw new Error("Request failed");
-      setStatus("success");
-    } catch {
+    if (problem) {
       setStatus("error");
-      setError("Something went wrong. Please call or email instead — details below.");
+      setError(problem);
+      return;
     }
+    setStatus("success");
   }
 
   if (status === "success") {

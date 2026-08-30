@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { submitLead } from "@/lib/leads/submit";
+
 /**
  * General contact form.
  *
@@ -19,6 +21,9 @@ const INTENTS = [
 
 export function ContactForm() {
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  /* Holds the SERVER's wording, so a fixable mistake ("Enter a valid Indian mobile number") is
+   * shown instead of a generic apology. See lib/leads/submit.ts. */
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -27,24 +32,21 @@ export function ContactForm() {
     const formData = new FormData(event.currentTarget);
     const intent = formData.get("intent");
 
-    try {
-      const response = await fetch("/api/leads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "contact",
-          name: formData.get("name"),
-          email: formData.get("email"),
-          phone: formData.get("phone"),
-          // Intent is folded into the message so it survives into any CRM without a custom field.
-          message: `[${intent}] ${formData.get("message")}`,
-        }),
-      });
-      if (!response.ok) throw new Error("Request failed");
-      setStatus("success");
-    } catch {
+    const problem = await submitLead({
+      type: "contact",
+      name: formData.get("name"),
+      email: formData.get("email"),
+      phone: formData.get("phone"),
+      // Intent is folded into the message so it survives into any CRM without a custom field.
+      message: `[${intent}] ${formData.get("message")}`,
+    });
+
+    if (problem) {
       setStatus("error");
+      setError(problem);
+      return;
     }
+    setStatus("success");
   }
 
   if (status === "success") {
@@ -103,7 +105,7 @@ export function ContactForm() {
 
         {status === "error" && (
           <p role="alert" className="text-sm text-clay-700">
-            Something went wrong. Please try again, or call instead.
+            {error ?? "Something went wrong. Please try again, or call instead."}
           </p>
         )}
 

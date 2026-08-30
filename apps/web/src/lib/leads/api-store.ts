@@ -16,6 +16,32 @@ import type { Lead, LeadInput } from "./types";
  *
  * So the file store is now DEVELOPMENT ONLY, and `getLeadStore()` refuses it in production.
  */
+
+/**
+ * A rejection the person filling in the form can fix themselves.
+ *
+ * Separate from a generic failure so the route handler can answer 400 with something actionable
+ * instead of 500 with an apology. Nest returns `message` as either a string or an array of
+ * validation failures.
+ */
+export class LeadValidationError extends Error {
+  constructor(readonly messages: string[]) {
+    super(messages.join(" "));
+    this.name = "LeadValidationError";
+  }
+}
+
+async function extractValidationMessages(response: Response): Promise<string[]> {
+  try {
+    const body = (await response.json()) as { message?: string | string[] };
+    if (Array.isArray(body.message) && body.message.length > 0) return body.message;
+    if (typeof body.message === "string" && body.message.length > 0) return [body.message];
+  } catch {
+    // Non-JSON body — fall through to the generic wording.
+  }
+  return ["Please check the details you entered and try again."];
+}
+
 export class ApiLeadStore implements LeadStore {
   readonly name = "ApiLeadStore (Postgres via API)";
 
@@ -54,7 +80,25 @@ export class ApiLeadStore implements LeadStore {
 
     if (!response.ok) {
       /*
-       * Throw rather than swallow. The route handler above turns this into a 500 with a "call us
+       * ⚠️ A 400 IS THE BUYER'S TYPO, NOT AN OUTAGE, AND THE DIFFERENCE MATTERS MORE HERE THAN
+       * ANYWHERE ELSE ON THE SITE.
+       *
+       * Every failure used to become the same 500 and the same "Could not save your request,
+       * please call or email instead". So someone who typed nine digits instead of ten was told
+       * the site was broken, on the one page whose entire purpose is capturing a lead, with no
+       * hint that the fix was one character in a field they could see. That is a lost enquiry
+       * caused by an error message.
+       *
+       * Validation messages are safe to surface because they describe the caller's OWN input —
+       * unlike a driver error or a stack trace, which is why only 400 is passed through and
+       * everything else still degrades to the generic message.
+       */
+      if (response.status === 400) {
+        throw new LeadValidationError(await extractValidationMessages(response));
+      }
+
+      /*
+       * Throw rather than swallow. The route handler turns this into a 500 with a "call us
        * instead" message — which is honest. Returning a fabricated success would be the exact
        * failure mode this class exists to eliminate, just moved one layer up.
        */

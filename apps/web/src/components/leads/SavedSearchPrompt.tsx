@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { submitLead } from "@/lib/leads/submit";
+
 /**
  * Saved-search / instant-alert signup.
  *
@@ -23,6 +25,9 @@ export function SavedSearchPrompt({
   queryString: string;
 }) {
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  /* Holds the SERVER's wording, so a fixable mistake ("Enter a valid Indian mobile number") is
+   * shown instead of a generic apology. See lib/leads/submit.ts. */
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -30,23 +35,20 @@ export function SavedSearchPrompt({
 
     const formData = new FormData(event.currentTarget);
 
-    try {
-      const response = await fetch("/api/leads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "saved-search",
-          // No name field on this form — the follow-up email asks, once they're already engaged.
-          name: "Saved search subscriber",
-          email: formData.get("email"),
-          message: `Saved search: ${searchDescription} (/search?${queryString})`,
-        }),
-      });
-      if (!response.ok) throw new Error("Request failed");
-      setStatus("success");
-    } catch {
+    const problem = await submitLead({
+      type: "saved-search",
+      // No name field on this form — the follow-up email asks, once they're already engaged.
+      name: "Saved search subscriber",
+      email: formData.get("email"),
+      message: `Saved search: ${searchDescription} (/search?${queryString})`,
+    });
+
+    if (problem) {
       setStatus("error");
+      setError(problem);
+      return;
     }
+    setStatus("success");
   }
 
   if (status === "success") {
@@ -102,7 +104,7 @@ export function SavedSearchPrompt({
 
         {status === "error" && (
           <p role="alert" className="mt-3 text-sm text-clay-700">
-            Something went wrong. Please try again.
+            {error ?? "Something went wrong. Please try again."}
           </p>
         )}
 

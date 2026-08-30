@@ -105,3 +105,46 @@ test("status changes on an enquiry stick", async ({ page }) => {
   const reloaded = page.locator("li").filter({ hasText: BUYER.phone }).first();
   await expect(reloaded.getByLabel("Status")).toHaveValue("CONTACTED");
 });
+
+/**
+ * A mistyped phone number is the visitor's mistake, and the form has to say so.
+ *
+ * ⚠️ EVERY FAILURE USED TO BECOME THE SAME 500 AND THE SAME "Could not save your request. Please
+ * call or email instead." So someone who typed nine digits instead of ten was told the site was
+ * broken — on the one page whose entire purpose is capturing a lead, with no hint that the fix was
+ * one character in a field they could see. An error message was losing enquiries.
+ *
+ * Asserted at both layers because they fail differently: the route has to answer 400 with the
+ * reason rather than 500 with an apology, and the form has to actually render it.
+ */
+test("a mistyped phone number is reported to the buyer, not swallowed as an outage", async ({
+  page,
+  request,
+}) => {
+  /* Nine digits after +91. The API wants ten, starting 6-9. */
+  const tooShort = await request.post(`${SITE_URL}/api/leads`, {
+    data: {
+      type: "contact",
+      name: "E2E Test Buyer",
+      email: uniqueEmail("badphone"),
+      phone: "+91987650012",
+      message: `${E2E_PREFIX} browser test enquiry — please ignore.`,
+    },
+  });
+
+  expect(tooShort.status(), "a correctable mistake must not present as a server outage").toBe(400);
+  expect(await tooShort.text()).toContain("Enter a valid Indian mobile number");
+
+  /* And the form in front of a real person shows that wording rather than the generic fallback. */
+  await page.goto(`${SITE_URL}/contact`);
+  const form = page.locator("form").first();
+  await form.getByLabel("Name", { exact: true }).fill("E2E Test Buyer");
+  await form.getByLabel("Email", { exact: true }).fill(uniqueEmail("badphone-ui"));
+  await form.getByLabel(/^Phone/).fill("+91987650012");
+  await form.getByLabel("Message").fill(`${E2E_PREFIX} browser test enquiry — please ignore.`);
+  await form.getByRole("button", { name: /Send|Submit/ }).click();
+
+  /* Scoped to the form: Next renders a route announcer with `role="alert"` at document level, so
+   * a bare getByRole("alert") is ambiguous on every page of this app. */
+  await expect(form.getByRole("alert")).toContainText("Enter a valid Indian mobile number");
+});

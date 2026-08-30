@@ -18,7 +18,13 @@ import { cn } from "@/lib/cn";
 
 const NAV_LINKS = [
   { href: "/search", label: "Search Homes" },
-  { href: "/neighborhoods", label: "Neighborhoods" },
+  /*
+   * ⚠️ `/localities`, NOT `/neighborhoods`. The route was renamed in the India pivot and this link
+   * was missed, so the site header pointed every page at a 404 — the most-visited dead link it is
+   * possible to ship. "Area guides" is what the page's own title and the footer already call it;
+   * "neighborhood" is US vocabulary and US spelling, and this market says locality or area.
+   */
+  { href: "/localities", label: "Area Guides" },
   { href: "/listings", label: "Our Listings" },
   { href: "/about", label: "About" },
   { href: "/contact", label: "Contact" },

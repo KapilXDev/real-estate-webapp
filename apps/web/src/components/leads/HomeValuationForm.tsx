@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { submitLead } from "@/lib/leads/submit";
+
 /**
  * Home valuation request — the highest-converting form on the site (5-15%, vs ~1% for a standard
  * contact page).
@@ -29,6 +31,9 @@ export function HomeValuationForm() {
   const [step, setStep] = useState<1 | 2>(1);
   const [address, setAddress] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  /* Holds the SERVER's wording, so a fixable mistake ("Enter a valid Indian mobile number") is
+   * shown instead of a generic apology. See lib/leads/submit.ts. */
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -36,25 +41,22 @@ export function HomeValuationForm() {
 
     const formData = new FormData(event.currentTarget);
 
-    try {
-      const response = await fetch("/api/leads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "home-valuation",
-          name: formData.get("name"),
-          email: formData.get("email"),
-          phone: formData.get("phone"),
-          propertyAddress: address,
-          timeframe: formData.get("timeframe"),
-          message: formData.get("message"),
-        }),
-      });
-      if (!response.ok) throw new Error("Request failed");
-      setStatus("success");
-    } catch {
+    const problem = await submitLead({
+      type: "home-valuation",
+      name: formData.get("name"),
+      email: formData.get("email"),
+      phone: formData.get("phone"),
+      propertyAddress: address,
+      timeframe: formData.get("timeframe"),
+      message: formData.get("message"),
+    });
+
+    if (problem) {
       setStatus("error");
+      setError(problem);
+      return;
     }
+    setStatus("success");
   }
 
   if (status === "success") {
@@ -160,7 +162,7 @@ export function HomeValuationForm() {
 
           {status === "error" && (
             <p role="alert" className="text-sm text-clay-700">
-              Something went wrong. Please try again, or call instead.
+              {error ?? "Something went wrong. Please try again, or call instead."}
             </p>
           )}
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { LeadValidationError } from "@/lib/leads/api-store";
 import { getLeadStore } from "@/lib/leads/store";
 import type { LeadInput, LeadType } from "@/lib/leads/types";
 
@@ -85,6 +86,18 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, id: lead.id, score: lead.score }, { status: 201 });
   } catch (error) {
+    /*
+     * ⚠️ A REJECTION THE VISITOR CAN FIX IS NOT AN OUTAGE. Answering 400 with the actual reason —
+     * "Enter a valid Indian mobile number" — turns a lost enquiry into a corrected one. Everything
+     * else still degrades to the generic message below, because a driver error or a stack trace
+     * has no business on a public form.
+     */
+    if (error instanceof LeadValidationError) {
+      return NextResponse.json({ error: error.messages.join(" "), fields: error.messages }, {
+        status: 400,
+      });
+    }
+
     console.error("Failed to persist lead:", error);
     // Never leak internals to a public form, but never silently drop a lead either.
     return NextResponse.json(

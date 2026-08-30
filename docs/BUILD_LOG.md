@@ -11,7 +11,7 @@ without re-exploring. Newest entry at the top.
 
 **The product is operable and now has browser coverage.** Buyers search real inventory, enquiries
 land in Postgres, and the agent runs the whole thing from `apps/admin`. 170 integration tests plus
-26 Playwright tests. **Read `docs/FLOWS.md`** for the journeys and what is missing.
+30 Playwright tests. **Read `docs/FLOWS.md`** for the journeys and what is missing.
 
 **Standing facts (do NOT re-diagnose):**
 - 19 migrations applied. Containers: `tricity-postgres`, `tricity-minio`.
@@ -56,9 +56,11 @@ firing once a registration exists.
    and OSM polygons to replace the generated circles that currently overlap.
 4. **Put the browser suite in CI.** The workflow already runs migrations and the integration
    tests against a Postgres service container; this needs MinIO plus the three servers.
-5. **A git remote.** Still none — everything lives on one machine.
-6. **Integration coverage for `ListingWriteRepository.update()`** — it had none, which is how a
-   statement that could never parse shipped. Step 21.
+5. **Push.** A remote exists (`origin`) but it is still at `99f3298`; everything since is local
+   only.
+6. **Integration coverage for the WRITE paths.** Nine mutating statements across five
+   repositories and no spec touches any of them — which is how a statement that could never parse
+   shipped. Steps 21 and 24.
 7. **Identity `repositories/` extraction** — the one module not on the full layered pattern. Port
    its throwaway smoke script into the harness first.
 8. **ESLint 9 flat config for `apps/api`** — still none, so `npm run lint` skips the workspace.
@@ -74,7 +76,7 @@ npm run api:dev        # http://localhost:3001/api
 npm run web:dev        # http://localhost:3000
 npm run admin:dev      # http://localhost:3002
 npm test --workspace=@tricity/api      # 170 tests, ~2s
-npm run test:e2e                       # 26 browser tests, ~22s, needs all three servers
+npm run test:e2e                       # 30 browser tests, ~45s, needs all three servers
 ```
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
@@ -84,6 +86,73 @@ npm run test:e2e                       # 26 browser tests, ~22s, needs all three
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-30 — Step 24: A dead link in the header, and an error message that lost enquiries
+
+Two user-reported problems, both of which turned out to be worse than they looked.
+
+## The site header pointed at a 404, on every page
+
+`SiteHeader` linked to `/neighborhoods`. The India pivot renamed that route to `/localities` and
+this one link was missed, so the second item in the main navigation was dead — on the home page,
+on every listing, everywhere. Nothing in the codebase could have caught it: a `<Link href>` to a
+route that does not exist is valid TypeScript and valid JSX, and the build is perfectly happy.
+
+The footer had it right the whole time, and calls it **Area Guides** — which is also the page's own
+metadata title, and the vocabulary this market actually uses. "Neighborhood" is US wording and US
+spelling; the header now matches the rest of the site.
+
+`/neighborhoods` and `/neighbourhoods` now 308 to `/localities`, deep paths included. Permanent
+rather than temporary because the old path is not coming back, and both spellings because half the
+world writes the U and someone guessing a URL should land somewhere useful.
+
+**A crawl test now walks every internal link on the public site.** It found the header bug
+immediately, and it is the only kind of test that would have. Cheapest possible bug to catch, most
+embarrassing one to ship.
+
+⚠️ The crawl is PACED, and a 429 is retried rather than counted as broken. Each page triggers one
+or two server-side API calls and the API allows 10 requests per second per IP, so an unpaced crawl
+of forty pages outruns the limiter, the site's own fetch fails, and the page renders `notFound()`.
+The first run duly reported three listing pages as 404s that were serving fine a second later. A
+rate limit is not a broken link, and a test that conflates the two sends someone hunting a bug that
+does not exist.
+
+## A locality without a guide is a 404 on purpose
+
+Worth stating plainly because it looks like the same bug and is not.
+`/localities/chandigarh/sector-22` returns 404 because Sector 22 has no hand-written content. There
+are 102 localities and 8 guides; templating the other 94 would produce near-identical thin pages,
+which reads to a search engine as doorway spam and damages the whole domain. `generateStaticParams`
+and the sitemap both iterate only the ones with real copy, and — verified by the crawl — nothing
+links to the rest, so the 404 is unreachable by clicking. There is now a test asserting exactly
+that, so anyone tempted to "fix" it by rendering a template has to confront the reason first.
+
+## An error message was losing enquiries
+
+`/api/leads` turned every failure into the same 500 and the same "Could not save your request.
+Please call or email instead." Including a 400. So a visitor who typed nine digits instead of ten
+was told the site was broken — on the one page whose entire purpose is capturing a lead, with no
+hint that the fix was one character in a field they could see. The API had said exactly what was
+wrong ("Enter a valid Indian mobile number") and the site threw it away.
+
+A 400 now comes back as a 400 with the reason. Only 400 — a driver error or a stack trace has no
+business on a public form, so everything else still degrades to the generic wording. Validation
+messages are safe precisely because they describe the caller's own input.
+
+All four lead forms — tour request, contact, home valuation, saved search — now go through one
+`submitLead` helper. Each previously had its own copy of `if (!response.ok) throw` followed by a
+hardcoded apology, which is why the distinction was missing in four places at once and why fixing
+one would have left three wrong.
+
+## Coverage note
+
+The write paths remain the thinnest-tested part of the API: nine mutating statements across five
+repositories (`listing-write`, `lead`, `media`, `rera`, `property`) and no integration spec touches
+any of them. That is not an abstract worry — it is how `ListingWriteRepository.update()` shipped a
+statement that could never parse. The browser suite now covers these paths end to end, which is
+better than nothing, but it exercises them through three processes and cannot isolate a fault.
 
 ---
 
