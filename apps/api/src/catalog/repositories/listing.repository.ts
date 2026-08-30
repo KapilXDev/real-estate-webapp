@@ -361,7 +361,7 @@ export class ListingRepository {
 
     const rows = await this.database.withTenant(context, async (tx) => {
       return tx<ListingMediaRow[]>`
-        SELECT listing_id, storage_key, caption, sort_order, kind, processing_status
+        SELECT id, listing_id, storage_key, caption, sort_order, kind, processing_status
         FROM listing_media
         WHERE listing_id = ANY(${listingIds}::uuid[])
           -- A photo still being resized would render as a broken image; the UI shows a

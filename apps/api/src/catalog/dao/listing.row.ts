@@ -93,6 +93,8 @@ export interface ListingRow {
 }
 
 export interface ListingMediaRow {
+  /** Needed to build the delivery URL — see the mapper. */
+  id: string;
   listing_id: string;
   storage_key: string;
   caption: string | null;

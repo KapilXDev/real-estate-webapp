@@ -199,6 +199,23 @@ function toStoredArea(area: ListingDto["plotArea"]): StoredArea | undefined {
   };
 }
 
+/**
+ * Turn the API's media PATH into a URL the browser can actually load.
+ *
+ * ⚠️ The API returns `/api/media/:id/card` — a path on the API's origin, not on this site's. The
+ * browser is on the web app's origin, so rendering that path unchanged asks for
+ * `http://localhost:3000/api/media/...`, which does not exist and produces a page of broken
+ * images. The API and the site are separate deployments; there is no shared origin to fall back on.
+ *
+ * `MEDIA_BASE_URL` must therefore be PUBLIC (`NEXT_PUBLIC_`), unlike `API_URL` — the browser is
+ * what fetches these bytes. It also cleanly becomes a CDN hostname later without touching any
+ * component, which is the eventual shape: images served from an edge cache rather than the API.
+ */
+function toMediaUrl(media: ListingDto["media"][number]) {
+  const base = (process.env.NEXT_PUBLIC_MEDIA_BASE_URL ?? "").replace(/\/$/, "");
+  return { ...media, url: `${base}${media.url}` };
+}
+
 export function toListing(dto: ListingDto): Listing {
   return {
     listingKey: dto.listingKey,
@@ -236,7 +253,7 @@ export function toListing(dto: ListingDto): Listing {
 
     publicRemarks: dto.publicRemarks,
     features: dto.features,
-    media: dto.media,
+    media: dto.media.map(toMediaUrl),
 
     daysOnMarket: dto.daysOnMarket,
     modificationTimestamp: dto.modificationTimestamp,

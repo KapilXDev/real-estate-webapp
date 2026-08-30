@@ -28,7 +28,30 @@ const nextConfig: NextConfig = {
     contentDispositionType: "attachment",
     contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
 
-    // remotePatterns: [{ protocol: "https", hostname: "<media-cdn>" }],
+    /*
+     * Hosts next/image may fetch listing photos from.
+     *
+     * ⚠️ Derived from NEXT_PUBLIC_MEDIA_BASE_URL rather than hardcoded, because that value moves:
+     * it is the API in development and a CDN hostname in production. A mismatch does not warn —
+     * next/image simply refuses the URL and the listing renders with a broken image.
+     */
+    remotePatterns: (() => {
+      const base = process.env.NEXT_PUBLIC_MEDIA_BASE_URL;
+      if (!base) return [];
+      try {
+        const url = new URL(base);
+        return [
+          {
+            protocol: url.protocol.replace(":", "") as "http" | "https",
+            hostname: url.hostname,
+            port: url.port || undefined,
+            pathname: "/api/media/**",
+          },
+        ];
+      } catch {
+        return [];
+      }
+    })(),
   },
 };
 

@@ -106,10 +106,21 @@ function features(raw: unknown): string[] {
 
 export function toMediaDto(row: ListingMediaRow): ListingMediaDto {
   return {
-    // The API returns a path, not a signed URL. Signing belongs at the point of delivery (CDN or
-    // media service) where the expiry can be short; baking one into a cached search response
-    // would hand out URLs that outlive their signature.
-    url: `/media/${row.storage_key}`,
+    /*
+     * ⚠️ THE DELIVERY PATH, NEVER `storage_key`.
+     *
+     * This originally emitted `/media/${row.storage_key}` — written before the media module
+     * existed — which was wrong twice over. It leaked the object's real bucket key into a public
+     * response, and a storage key is effectively the file's address; and it pointed at a route
+     * that serves nothing, so every listing rendered with broken images.
+     *
+     * `/api/media/:id/:variant` resolves the row under the caller's tenant context first, so RLS
+     * decides whether the photo of a private or draft listing is served at all.
+     *
+     * `card` is the default variant because search results are by far the most requested; the
+     * client can swap the suffix for `thumb` or `hero`.
+     */
+    url: `/api/media/${row.id}/card`,
     caption: row.caption ?? "",
     order: row.sort_order,
   };
