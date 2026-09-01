@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 
+import { site } from "@/config/site";
 import { formatPrice } from "@/lib/format";
 import { submitLead } from "@/lib/leads/submit";
+import { WhatsAppConsent } from "./WhatsAppConsent";
 import type { Listing } from "@/lib/listings/types";
 
 /**
@@ -34,6 +36,7 @@ export function TourRequestForm({ listing }: { listing: Listing }) {
       name: formData.get("name"),
       email: formData.get("email"),
       phone: formData.get("phone"),
+      whatsappOptIn: formData.get("whatsappOptIn") === "on",
       message: formData.get("message"),
       preferredDate: formData.get("preferredDate"),
       listingKey: listing.listingKey,
@@ -101,6 +104,8 @@ export function TourRequestForm({ listing }: { listing: Listing }) {
             className="mt-1.5 w-full rounded-md border border-sand-300 px-3 py-2 text-sm text-sand-900 focus:border-brand-600 focus:outline-none"
           />
         </div>
+
+        <WhatsAppConsent agentName={site.agent.name} />
 
         {error && (
           <p role="alert" className="text-sm text-clay-700">

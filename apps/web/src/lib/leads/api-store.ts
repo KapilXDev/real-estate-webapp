@@ -61,6 +61,7 @@ export class ApiLeadStore implements LeadStore {
       name: input.name,
       email: input.email,
       phone: input.phone,
+      whatsappOptIn: input.whatsappOptIn,
       message: input.message,
       listingKey: input.listingKey,
       preferredDate: input.preferredDate,

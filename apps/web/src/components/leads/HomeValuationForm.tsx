@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 
+import { site } from "@/config/site";
 import { submitLead } from "@/lib/leads/submit";
+import { WhatsAppConsent } from "./WhatsAppConsent";
 
 /**
  * Home valuation request — the highest-converting form on the site (5-15%, vs ~1% for a standard
@@ -46,6 +48,7 @@ export function HomeValuationForm() {
       name: formData.get("name"),
       email: formData.get("email"),
       phone: formData.get("phone"),
+      whatsappOptIn: formData.get("whatsappOptIn") === "on",
       propertyAddress: address,
       timeframe: formData.get("timeframe"),
       message: formData.get("message"),
@@ -129,6 +132,8 @@ export function HomeValuationForm() {
           <Input name="name" label="Name" required autoComplete="name" />
           <Input name="email" label="Email" type="email" required autoComplete="email" />
           <Input name="phone" label="Phone" type="tel" autoComplete="tel" hint="Optional" />
+
+          <WhatsAppConsent agentName={site.agent.name} />
 
           <div>
             <label htmlFor="timeframe" className="block text-sm font-medium text-sand-800">

@@ -229,6 +229,20 @@ Next, in order:
   `forbidNonWhitelisted`, so a mismatch is a 400 — not an ignored parameter. `?area=` with a
   property called `localities` made every locality search fail with "property area should not
   exist", which reads like a validator bug.
+- **Speed-to-lead never blocks the lead response.** `LeadService` fires `SpeedToLeadService`
+  unawaited with a `catch`; the lead is already committed and a messaging outage must never become
+  a failed enquiry. `acknowledge()` swallows everything and records the outcome on `lead_activity`.
+- **⚠️ WhatsApp consent is a gate that fails closed.** No `whatsappOptIn`, no message — not
+  inferred from the presence of a phone number. Unsolicited messaging is a regulatory problem in
+  India and complaints get the agent's number removed, costing them the channel the product is
+  built on. The checkbox is unticked by default and `WhatsAppConsent` says so; do not add
+  `defaultChecked`.
+- **Outside a 24-hour window WhatsApp permits only a PRE-APPROVED TEMPLATE**, and a web lead has
+  never messaged us — so the first contact is always a template with POSITIONAL `{{1}}` variables.
+  Reordering them silently swaps the buyer's name for the property. There is deliberately no
+  "send arbitrary text" method on `OutboundMessageProvider`.
+- **Only `MESSAGING_PROVIDER=log` exists**, and it reports `canDeliver: false` so the trail says
+  "simulated", never "sent". The risk this feature carries is believing it is live when it is not.
 - **RERA registrations are per (organisation, jurisdiction)** — `organization_rera`, resolved by
   joining on the listing's CITY state. `ListingAdminService` blocks publication without a valid one
   for that jurisdiction; drafts are always allowed. Do not add a bypass flag.

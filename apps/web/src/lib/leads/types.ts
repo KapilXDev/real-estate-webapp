@@ -25,6 +25,15 @@ export interface Lead {
   name: string;
   email: string;
   phone?: string;
+  /**
+   * ⚠️ EXPLICIT WHATSAPP CONSENT, AND ABSENCE MEANS NO.
+   *
+   * Not inferred from the fact that someone typed a phone number into a form. Unsolicited
+   * commercial messaging is a regulatory problem in India, and a number that generates complaints
+   * gets removed by WhatsApp — which would cost the agent the primary channel this market runs
+   * on. Optional here so that a caller who omits it can never accidentally opt someone in.
+   */
+  whatsappOptIn?: boolean;
   message?: string;
 
   /** Property context, when the lead originated from a specific listing. */

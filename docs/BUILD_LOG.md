@@ -10,8 +10,8 @@ without re-exploring. Newest entry at the top.
 ## NEXT UP — resume point for a fresh session
 
 **The product is operable and now has browser coverage.** Buyers search real inventory, enquiries
-land in Postgres, and the agent runs the whole thing from `apps/admin`. 170 integration tests plus
-30 Playwright tests. **Read `docs/FLOWS.md`** for the journeys and what is missing.
+land in Postgres, and the agent runs the whole thing from `apps/admin`. 184 integration tests plus
+33 Playwright tests. **Read `docs/FLOWS.md`** for the journeys and what is missing.
 
 **Standing facts (do NOT re-diagnose):**
 - 19 migrations applied. Containers: `tricity-postgres`, `tricity-minio`.
@@ -48,9 +48,10 @@ firing once a registration exists.
 **Next, in rough priority:**
 
 1. **Fix the form-reset bug above.**
-2. **Speed-to-lead auto-WhatsApp** — the highest-ROI feature left, and the reason `phone` is
-   weighted so heavily in lead scoring. Needs a WhatsApp Business API account and opt-in language.
-   TODO marker is in `leads/services/lead.service.ts`; it must NOT block the lead response.
+2. **Turn speed-to-lead on.** Everything but the network call is built and tested (Step 25).
+   Needs: a WhatsApp Business account or a BSP, the `lead_acknowledgement` template approved by
+   Meta, a `WhatsAppCloudProvider`, and `"whatsapp-cloud"` added to the `MESSAGING_PROVIDER` enum
+   plus a case in `MessagingModule`. Until then the boot log says clearly that nothing is sent.
 3. **The launch content blockers** — real agent details and RERA numbers (the launch guard refuses
    to serve a public site until they are filled in), real price bands for the 8 locality guides,
    and OSM polygons to replace the generated circles that currently overlap.
@@ -75,8 +76,8 @@ npm run db:bootstrap -- --email you@example.com --name "You" --org "Firm"
 npm run api:dev        # http://localhost:3001/api
 npm run web:dev        # http://localhost:3000
 npm run admin:dev      # http://localhost:3002
-npm test --workspace=@tricity/api      # 170 tests, ~2s
-npm run test:e2e                       # 30 browser tests, ~45s, needs all three servers
+npm test --workspace=@tricity/api      # 184 tests, ~3s
+npm run test:e2e                       # 33 browser tests, ~65s, needs all three servers
 ```
 
 ## OPEN QUESTIONS (blocking real content, not blocking code)
@@ -86,6 +87,96 @@ npm run test:e2e                       # 30 browser tests, ~45s, needs all three
 - **Real price bands + editorial review** for the 8 locality guides in
   `apps/web/src/config/localities.ts`. Current copy is unverified draft.
 - Which additional localities deserve hand-written guides (target 20+).
+
+---
+
+## 2026-08-31 — Step 25: Speed-to-lead, everything except the network call
+
+The highest-ROI feature left, built up to the point where a real provider is one class and one
+environment variable. Answering a web enquiry in the first minutes dominates every other variable
+in conversion — a buyer is enquiring on several properties at once and the first reply frames the
+conversation — and it is why `phone` outweighs every property attribute in scoring.
+
+## What was actually missing, and it was not the HTTP call
+
+The original TODO said this needed "a real WhatsApp Business API or SMS provider plus explicit
+opt-in language". The opt-in language turned out to be the bigger hole: **the API has accepted a
+`whatsappOptIn` flag since the leads module landed, and not one form on the site ever sent it.**
+So the consent gate would have refused every lead, correctly and invisibly, and the feature would
+have looked finished while messaging nobody. Found by writing the browser test, not by reading the
+code.
+
+## Shape
+
+`messaging/` is its own module, because three unrelated features will use it — speed-to-lead now,
+saved-search alerts and the market email later — and the transport underneath is a business
+decision that is not made yet (Meta direct, or a BSP like Gupshup, which is often easier to get
+approved in India).
+
+`OutboundMessageProvider` takes a template name plus positional variables and has **no method for
+sending arbitrary text**, because outside a 24-hour conversation window WhatsApp does not permit
+it. A lead who filled in a web form has never messaged us, so the first contact is always a
+pre-approved template. An API that allowed free text would invite code that cannot work in
+production.
+
+`OutboundMessageService` owns retry. It **never throws** — everything above it is on the revenue
+path — and it only retries failures the provider marks retryable. Every WhatsApp conversation is
+billed, so hammering "template not found" three times spends money and delays the fallback to a
+human. Backoff is deliberately impatient: the whole value is measured in the first minute, so
+failing fast and surfacing an unanswered lead beats a patient exponential schedule.
+
+`SpeedToLeadService` holds the policy: consent, template selection, and the audit trail.
+
+## 🔴 The three decisions that matter
+
+**Consent fails closed.** No opt-in recorded at collection time, no message — never inferred from
+the fact that someone typed a phone number. Unsolicited commercial messaging is a regulatory
+problem here and a number that collects complaints gets removed by WhatsApp, which would cost the
+agent the one channel this market runs on. Each way of lacking consent has its own test rather
+than one combined case, because "it fails closed" has to be provable.
+
+**Nothing blocks the lead.** `LeadService` fires it unawaited, with a `catch` on the floating
+promise — an unhandled rejection would take the process down under Node's default policy, which
+would be a spectacular way for an optional feature to break the revenue path. The service itself
+swallows everything and records the result.
+
+**Skips are recorded, not silent.** Every outcome — sent, simulated, failed, skipped and why —
+lands on `lead_activity` with structured metadata. Otherwise the agent assumes the buyer has been
+contacted and the lead goes cold waiting on a message that was never permitted. The no-consent
+entry says "Call or email instead", because that is the action.
+
+## The logging provider, and why it is not the stub the TODO warned about
+
+The old comment argued a stub that logs "would have sent" is worse than nothing because it looks
+done in review. Right about the risk, wrong about the conclusion: the danger is a stub that is
+*indistinguishable* from the real thing. So `canDeliver` is false, the trail says "simulated" and
+"NOT sent", and the boot log states plainly that no buyer will receive anything. Phone numbers are
+masked in logs — a buyer's mobile is the most sensitive thing here and has no business sitting in
+a log aggregator.
+
+What that buys is consent, templating, retry classification, the audit trail and "never block the
+response" all built and tested now, against fakes, with no account.
+
+## Also fixed here
+
+**The suite was racing its own cleanup.** Global setup deletes leftover `[E2E]` listings, but the
+site caches listing queries for 60 seconds — so `/search` went on advertising them, a test clicked
+one that no longer existed, and the enquiry it submitted carried a `listingKey` the API could not
+resolve. The lead was created without its property (correct: an unknown listing is not a reason to
+drop a real buyer) and the assertion failed pointing at the leads module. Setup and teardown now
+call the same revalidate endpoint the admin uses after a write.
+
+14 unit tests for the policy, 3 browser tests for the checkbox-to-database path. 184 API tests, 33
+browser tests.
+
+## Before this can send anything
+
+1. A WhatsApp Business account and a phone number, or a BSP.
+2. Submit `lead_acknowledgement` for approval — three positional variables: first name, who is
+   replying, what they enquired about.
+3. Write `WhatsAppCloudProvider implements OutboundMessageProvider`, classifying failures honestly
+   into retryable and not.
+4. Add `"whatsapp-cloud"` to the `MESSAGING_PROVIDER` enum and a case in `MessagingModule`.
 
 ---
 

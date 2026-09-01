@@ -4,6 +4,7 @@ import type { CreateLeadRequestDto, CreateLeadResponseDto } from "@tricity/contr
 import type { TenantContext } from "../../database/database.service";
 import { LeadRepository } from "../repositories/lead.repository";
 import { LeadScoringService } from "./lead-scoring.service";
+import { SpeedToLeadService } from "./speed-to-lead.service";
 
 const KIND_TO_DB: Record<CreateLeadRequestDto["kind"], string> = {
   "tour-request": "TOUR_REQUEST",
@@ -32,6 +33,7 @@ export class LeadService {
   constructor(
     private readonly leads: LeadRepository,
     private readonly scoring: LeadScoringService,
+    private readonly speedToLead: SpeedToLeadService,
   ) {}
 
   async create(input: CreateLeadRequestDto): Promise<CreateLeadResponseDto> {
@@ -113,21 +115,72 @@ export class LeadService {
       context,
     );
 
-    /*
-     * SPEED-TO-LEAD — deliberately still a TODO rather than a fake stub.
-     *
-     * Contacting a web lead within the first minute or two is the single highest-ROI action
-     * available, and it is the reason `phone` is weighted so heavily in scoring. It needs a real
-     * WhatsApp Business API or SMS provider plus explicit opt-in language, neither of which
-     * exists yet, and a stub that logs "would have sent" is worse than nothing because it looks
-     * done in a code review.
-     *
-     * ⚠️ WHEN THIS LANDS IT MUST NOT BLOCK THE RESPONSE. The lead is already committed above; a
-     * provider outage must never turn into a failed submission and a lost customer.
-     */
     this.logger.log(`Lead ${id} captured (kind=${input.kind}, score=${score})`);
 
+    /*
+     * ⚠️⚠️ SPEED-TO-LEAD, AND IT IS DELIBERATELY NOT AWAITED.
+     *
+     * Answering a web enquiry within the first minutes is the highest-ROI action available on
+     * this platform, and it is why `phone` outweighs every property attribute in scoring. But the
+     * lead is ALREADY COMMITTED by the time we get here, and the buyer is already waiting on this
+     * response — so a slow or broken messaging provider must never become a failed submission.
+     * Awaiting this would trade the thing that matters (the lead) for the thing that helps (the
+     * acknowledgement).
+     *
+     * `void` plus a `catch` is not sloppiness, it is the contract: `acknowledge()` already
+     * swallows and records everything, and the catch here is a second belt in case constructing
+     * the call itself throws. An unhandled rejection from a floating promise would take the
+     * process down under Node's default policy, which would be a spectacular way for an
+     * optional feature to break the revenue path.
+     */
+    void this.dispatchAcknowledgement({
+      leadId: id,
+      organizationId,
+      contactName: input.name,
+      phone: input.phone,
+      whatsappOptIn: input.whatsappOptIn ?? false,
+      listingLabel: input.propertyAddress,
+      context,
+    }).catch((error: unknown) => {
+      this.logger.error(
+        `Speed-to-lead dispatch threw for lead ${id}: ` +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    });
+
     return { id, received: true };
+  }
+
+  /**
+   * Look up what the message needs, then hand off.
+   *
+   * Separate from `create` so the revenue path reads as one straight line and the extra query for
+   * the organisation's name cannot accidentally end up inside it.
+   */
+  private async dispatchAcknowledgement(args: {
+    leadId: string;
+    organizationId: string;
+    contactName: string;
+    phone?: string;
+    whatsappOptIn: boolean;
+    listingLabel?: string;
+    context: TenantContext;
+  }): Promise<void> {
+    const organizationName =
+      (await this.leads.findOrganizationName(args.organizationId)) ?? "your property consultant";
+
+    await this.speedToLead.acknowledge(
+      {
+        leadId: args.leadId,
+        organizationId: args.organizationId,
+        organizationName,
+        contactName: args.contactName,
+        phoneE164: args.phone,
+        whatsappOptIn: args.whatsappOptIn,
+        listingLabel: args.listingLabel,
+      },
+      args.context,
+    );
   }
 
   /**

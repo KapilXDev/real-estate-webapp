@@ -51,7 +51,9 @@ test("an enquiry from the site reaches the agent's queue, ready to answer on Wha
   await form.getByLabel(/^Phone/).fill(BUYER.phone);
   /* The message is prefilled with the address; the marker replaces it so teardown can find this
    * enquiry even if it ends up attached to a pre-existing contact. */
-  await form.getByLabel("Message").fill(`${E2E_PREFIX} browser test enquiry — please ignore.`);
+  /* ⚠️ The textbox ROLE, not getByLabel("Message"): the WhatsApp consent copy begins "Message me
+   * on WhatsApp…", so a substring label match is ambiguous with the checkbox. */
+  await form.getByRole("textbox", { name: "Message" }).fill(`${E2E_PREFIX} browser test enquiry — please ignore.`);
   await form.getByRole("button", { name: "Request a tour" }).click();
 
   /* The buyer's confirmation. A form that silently succeeds is a form people submit twice. */
@@ -141,7 +143,7 @@ test("a mistyped phone number is reported to the buyer, not swallowed as an outa
   await form.getByLabel("Name", { exact: true }).fill("E2E Test Buyer");
   await form.getByLabel("Email", { exact: true }).fill(uniqueEmail("badphone-ui"));
   await form.getByLabel(/^Phone/).fill("+91987650012");
-  await form.getByLabel("Message").fill(`${E2E_PREFIX} browser test enquiry — please ignore.`);
+  await form.getByRole("textbox", { name: "Message" }).fill(`${E2E_PREFIX} browser test enquiry — please ignore.`);
   await form.getByRole("button", { name: /Send|Submit/ }).click();
 
   /* Scoped to the form: Next renders a route announcer with `role="alert"` at document level, so

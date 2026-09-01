@@ -96,6 +96,44 @@ const schema = z.object({
    * default of `https://bucket.host/key` needs wildcard DNS and fails against localhost with a
    * connection error that looks like the server is down rather than like a URL-style mismatch.
    */
+  /* --- Outbound messaging (speed-to-lead) ------------------------------------------------- */
+
+  /**
+   * Which transport actually sends.
+   *
+   * ⚠️ ONLY `log` IS IMPLEMENTED, AND THIS ENUM IS THE HONEST WAY TO SAY SO. Setting anything
+   * else fails at boot with a clear message rather than starting an API that silently drops every
+   * message. Adding a provider means adding a class and a value here — deliberately a two-line
+   * change, and deliberately not a string that would accept a typo.
+   */
+  MESSAGING_PROVIDER: z.enum(["log"]).default("log"),
+
+  /**
+   * The kill switch.
+   *
+   * ⚠️ `"true"` / `"false"` as strings, NOT `z.coerce.boolean()`. Coercion follows JavaScript
+   * truthiness, so the string "false" becomes `true` — a kill switch that cannot be switched off
+   * is worse than no kill switch, and it fails in the direction of messaging people.
+   */
+  SPEED_TO_LEAD_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+
+  /**
+   * The approved template sent to a new lead, and its language.
+   *
+   * In config rather than in code because Meta approves templates by hand: the copy changes on
+   * their timetable, not on a deploy. Names must match the approved template exactly.
+   */
+  SPEED_TO_LEAD_TEMPLATE: z.string().default("lead_acknowledgement"),
+  SPEED_TO_LEAD_TEMPLATE_LANGUAGE: z.string().default("en"),
+
+  /** Attempts per message, including the first. Retries only apply to retryable failures. */
+  OUTBOUND_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(3),
+  /** First backoff step; doubles each attempt. Short on purpose — see OutboundMessageService. */
+  OUTBOUND_RETRY_BASE_MS: z.coerce.number().int().min(0).max(10_000).default(400),
+
   MEDIA_ENDPOINT: z.string().optional(),
   MEDIA_REGION: z.string().default("us-east-1"),
   MEDIA_BUCKET: z.string().default("tricity-media"),

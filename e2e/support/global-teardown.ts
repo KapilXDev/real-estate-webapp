@@ -1,4 +1,5 @@
 import { cleanupE2EData } from "./db";
+import { purgeSiteListingCache } from "./env";
 
 /**
  * Remove the rows the run created.
@@ -11,6 +12,10 @@ import { cleanupE2EData } from "./db";
 export default async function globalTeardown(): Promise<void> {
   const removed = await cleanupE2EData();
   const total = Object.values(removed).reduce((a, b) => a + b, 0);
+  /* Same reason as in global-setup: without this the site advertises the listings just deleted
+   * for up to a minute, which is confusing for whoever is browsing and poisons the next run. */
+  if (removed.listings > 0) await purgeSiteListingCache();
+
   console.log(
     `[e2e] cleaned up ${total} row(s): ${removed.listings} listings, ${removed.leads} leads, ` +
       `${removed.contacts} contacts, ${removed.reraRegistrations} RERA`,

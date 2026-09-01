@@ -270,3 +270,48 @@ export async function ageRefreshTokenUse(rawToken: string, seconds: number): Pro
     await sql.end();
   }
 }
+
+/**
+ * The speed-to-lead trail entry for the lead whose contact has this phone number.
+ *
+ * ⚠️ Read from the database rather than the admin UI because the admin does not render the
+ * activity trail yet — and the thing worth asserting is the CONSENT DECISION, which is far too
+ * important to leave untested until a screen happens to display it. `metadata` is checked as a
+ * jsonb object, not a string, which also guards the double-encoding trap that has bitten this
+ * repo before.
+ */
+export async function whatsappActivityForPhone(phoneE164: string): Promise<{
+  outcome: string | null;
+  reason: string | null;
+  metadataType: string | null;
+  body: string | null;
+} | null> {
+  const sql = connect();
+  try {
+    const rows = await sql<
+      { outcome: string | null; reason: string | null; metadata_type: string | null; body: string | null }[]
+    >`
+      SELECT a.metadata->>'outcome'      AS outcome,
+             a.metadata->>'reason'       AS reason,
+             jsonb_typeof(a.metadata)    AS metadata_type,
+             a.body                      AS body
+        FROM lead_activity a
+        JOIN lead l    ON l.id = a.lead_id
+        JOIN contact c ON c.id = l.contact_id
+       WHERE c.primary_phone = ${phoneE164}
+         AND a.type = 'WHATSAPP'
+       ORDER BY a.occurred_at DESC
+       LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      outcome: row.outcome,
+      reason: row.reason,
+      metadataType: row.metadata_type,
+      body: row.body,
+    };
+  } finally {
+    await sql.end();
+  }
+}

@@ -3,7 +3,7 @@ import path from "node:path";
 import sharp from "sharp";
 
 import { assertDevDatabase, cleanupE2EData, ensureGateOrganisation } from "./db";
-import { repoRoot } from "./env";
+import { purgeSiteListingCache, repoRoot } from "./env";
 
 /**
  * The photo every upload test uses.
@@ -66,6 +66,19 @@ export default async function globalSetup(): Promise<void> {
    * nothing. */
   const { created } = await ensureGateOrganisation();
   if (created) console.log("[e2e] created the gate-test organisation");
+
+  /*
+   * ⚠️ After the delete, never before. The site caches listing queries for 60s, so rows removed
+   * above stay visible on /search until it is told otherwise — and a test that clicks a listing
+   * which no longer exists fails in a way that points at the wrong module entirely. Best-effort:
+   * the site may not be up yet, since Playwright starts its webServers after this hook.
+   */
+  if (stale > 0) {
+    const purge = await purgeSiteListingCache();
+    if (purge !== "purged") {
+      console.log(`[e2e] could not purge the site listing cache (${purge}) — first run may be stale`);
+    }
+  }
 
   await writeFixtureImage();
 }

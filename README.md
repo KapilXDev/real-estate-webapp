@@ -45,8 +45,8 @@ npm run admin:dev             # :3002
 ```
 
 ```bash
-npm test --workspace=@tricity/api    # 170 integration tests, ~2s
-npm run test:e2e                     # 30 browser tests, ~45s — needs all three servers running
+npm test --workspace=@tricity/api    # 184 integration tests, ~3s
+npm run test:e2e                     # 33 browser tests, ~65s — needs all three servers running
 ```
 
 ⚠️ **`apps/web` and `apps/admin` each need their own `.env.local`.** Next only reads `.env` files

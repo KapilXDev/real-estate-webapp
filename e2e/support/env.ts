@@ -67,6 +67,24 @@ export function loadRootEnv(): void {
 
 loadRootEnv();
 
+/**
+ * The site's own `.env.local`, read only for `REVALIDATE_SECRET`.
+ *
+ * ⚠️ Next does not read the repo-root `.env`, so the site's secret genuinely lives in its app
+ * directory and there is nowhere else to get it. The alternative was duplicating it into the root
+ * `.env`, where two copies would drift and the failure would be a silent 401 from a cache-purge
+ * call that nothing checks.
+ */
+function loadSiteEnv(): void {
+  const sitePath = path.join(repoRoot(), "apps", "web", ".env.local");
+  if (!existsSync(sitePath)) return;
+  for (const [key, value] of Object.entries(parseEnv(readFileSync(sitePath, "utf8")))) {
+    if (process.env[key] === undefined && typeof value === "string") process.env[key] = value;
+  }
+}
+
+loadSiteEnv();
+
 /** The buyer-facing site. */
 export const SITE_URL = process.env.E2E_SITE_URL ?? "http://localhost:3000";
 /** The API. Hit directly only to assert what an ANONYMOUS caller can see. */
@@ -133,3 +151,36 @@ export const E2E_ORG = {
   fullName: "E2E Gate Owner",
   password: "e2e-gate-password-123",
 };
+
+/**
+ * Tell the site to drop its cached listing queries.
+ *
+ * ⚠️⚠️ THE SUITE MUST DO THIS AFTER DELETING ROWS, AND SKIPPING IT CAUSES A FAILURE THAT LOOKS
+ * LIKE A PRODUCT BUG.
+ *
+ * Listing reads are cached for 60 seconds so crawler traffic does not turn every hit into a
+ * spatial query. So when setup removes leftover `[E2E]` listings, `/search` goes on advertising
+ * them for up to a minute — a test then clicks one, lands on a listing that no longer exists, and
+ * submits an enquiry whose `listingKey` the API cannot resolve. The lead is created without its
+ * property (correctly: an unknown listing is not a reason to drop a real buyer), and the
+ * assertion that the enquiry links back to the listing fails, pointing at the leads module.
+ *
+ * It is the same endpoint the admin calls after every write, and it is best-effort for the same
+ * reason: a cache hint that does not land is a 60-second delay, not a broken run.
+ */
+export async function purgeSiteListingCache(): Promise<"purged" | "skipped" | "failed"> {
+  const secret = process.env.REVALIDATE_SECRET;
+  if (!secret) return "skipped";
+
+  try {
+    const response = await fetch(`${SITE_URL}/api/revalidate`, {
+      method: "POST",
+      headers: { "x-revalidate-secret": secret },
+      signal: AbortSignal.timeout(5_000),
+    });
+    return response.ok ? "purged" : "failed";
+  } catch {
+    // The site may simply not be up yet; Playwright's webServer starts it after globalSetup.
+    return "failed";
+  }
+}

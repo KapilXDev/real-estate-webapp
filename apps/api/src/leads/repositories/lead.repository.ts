@@ -195,14 +195,45 @@ export class LeadRepository {
    * status alone.
    */
   async recordActivity(
-    input: { leadId: string; actorUserId?: string; type: string; body?: string },
+    input: {
+      leadId: string;
+      actorUserId?: string;
+      type: string;
+      body?: string;
+      /** Structured detail for machine-written entries — provider, outcome, attempt count. */
+      metadata?: Record<string, unknown>;
+    },
     context: TenantContext,
   ): Promise<void> {
     await this.database.withTenant(context, async (tx) => {
       await tx`
-        INSERT INTO lead_activity (lead_id, actor_user_id, type, body)
-        VALUES (${input.leadId}, ${input.actorUserId ?? null}, ${input.type}, ${input.body ?? null})
+        INSERT INTO lead_activity (lead_id, actor_user_id, type, body, metadata)
+        VALUES (
+          ${input.leadId},
+          ${input.actorUserId ?? null},
+          ${input.type},
+          ${input.body ?? null},
+          -- ⚠️ jsonb(), never \${JSON.stringify(x)}::jsonb — postgres.js double-encodes the
+          -- latter and the column silently ends up holding a JSON *string*.
+          ${input.metadata === undefined ? null : jsonb(tx, input.metadata)}
+        )
       `;
+    });
+  }
+
+  /**
+   * The organisation's display name, for use as the sender in an outbound message.
+   *
+   * Read with `isPlatformAdmin` for the same reason as `resolveListingOwner`: this runs while
+   * building a message for a lead that may belong to a partner, so the row is not necessarily
+   * inside the caller's tenant.
+   */
+  async findOrganizationName(organizationId: string): Promise<string | null> {
+    return this.database.withTenant({ isPlatformAdmin: true }, async (tx) => {
+      const rows = await tx<{ name: string }[]>`
+        SELECT name FROM organization WHERE id = ${organizationId} LIMIT 1
+      `;
+      return rows[0]?.name ?? null;
     });
   }
 

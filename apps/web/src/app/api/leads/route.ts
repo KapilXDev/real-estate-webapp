@@ -57,6 +57,8 @@ export async function POST(request: Request) {
     name,
     email,
     phone: str(body.phone),
+    // Strict `=== true`: a missing field, "false", 0 or any other shape must not read as consent.
+    whatsappOptIn: body.whatsappOptIn === true,
     message: str(body.message),
     listingKey: str(body.listingKey),
     listingAddress: str(body.listingAddress),
