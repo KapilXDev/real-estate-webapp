@@ -35,6 +35,8 @@ land in Postgres, and the agent runs the whole thing from `apps/admin`. 184 inte
 - Dev staff login: `owner@tricityestate.test` / `dev-owner-password-123`. Org `tricity-estate` is
   `is_host` and holds Punjab + Chandigarh RERA registrations (Haryana deliberately absent so the
   publication gate can be exercised).
+- **Pushed to `origin` (github.com/KapilXDev/real-estate-webapp) and CI is GREEN.** It had failed
+  every run until Step 24 — never add the Next apps to a bare `tsc --noEmit` step, see that entry.
 - A second dev organisation, `e2e-gate-firm`, exists purely so the browser suite can exercise the
   RERA gate against an empty compliance record. Not `is_host`; invisible on the site.
 
@@ -57,15 +59,13 @@ firing once a registration exists.
    and OSM polygons to replace the generated circles that currently overlap.
 4. **Put the browser suite in CI.** The workflow already runs migrations and the integration
    tests against a Postgres service container; this needs MinIO plus the three servers.
-5. **Push.** A remote exists (`origin`) but it is still at `99f3298`; everything since is local
-   only.
-6. **Integration coverage for the WRITE paths.** Nine mutating statements across five
+5. **Integration coverage for the WRITE paths.** Nine mutating statements across five
    repositories and no spec touches any of them — which is how a statement that could never parse
    shipped. Steps 21 and 24.
-7. **Identity `repositories/` extraction** — the one module not on the full layered pattern. Port
+6. **Identity `repositories/` extraction** — the one module not on the full layered pattern. Port
    its throwaway smoke script into the harness first.
-8. **ESLint 9 flat config for `apps/api`** — still none, so `npm run lint` skips the workspace.
-9. **`@tricity/geo` has no Panchkula localities**, so no listing can be created in Haryana and the
+7. **ESLint 9 flat config for `apps/api`** — still none, so `npm run lint` skips the workspace.
+8. **`@tricity/geo` has no Panchkula localities**, so no listing can be created in Haryana and the
    Haryana RERA gate is unreachable from the UI. Either add them or drop Haryana from the RERA
    screen.
 
